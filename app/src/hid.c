@@ -9,6 +9,9 @@
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #include <zmk/hid.h>
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+#include <zmk/harbour_hid_suppression.h>
+#endif
 #include <dt-bindings/zmk/modifiers.h>
 
 static struct zmk_hid_keyboard_report keyboard_report = {
@@ -48,7 +51,14 @@ static zmk_mod_flags_t masked_modifiers = 0;
 
 #define GET_MODIFIERS (keyboard_report.body.modifiers)
 
-zmk_mod_flags_t zmk_hid_get_explicit_mods(void) { return explicit_modifiers; }
+zmk_mod_flags_t zmk_hid_get_explicit_mods(void) {
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+    if (zmk_harbour_hid_has_rebuilt()) {
+        return zmk_harbour_hid_logical_mods();
+    }
+#endif
+    return explicit_modifiers;
+}
 
 int zmk_hid_register_mod(zmk_mod_t modifier) {
     explicit_modifier_counts[modifier]++;
@@ -374,6 +384,11 @@ int zmk_hid_release(uint32_t usage) {
 }
 
 bool zmk_hid_is_pressed(uint32_t usage) {
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+    if (zmk_harbour_hid_has_rebuilt()) {
+        return zmk_harbour_hid_logical_is_pressed(usage);
+    }
+#endif
     switch (ZMK_HID_USAGE_PAGE(usage)) {
     case HID_USAGE_KEY:
         return zmk_hid_keyboard_is_pressed(ZMK_HID_USAGE_ID(usage));

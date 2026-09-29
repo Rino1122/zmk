@@ -54,6 +54,36 @@ static bool harbour_is_key_origin(uint32_t position) {
             position < ZMK_VIRTUAL_KEY_POSITION_COMBO(ZMK_COMBOS_LEN));
 }
 
+bool zmk_harbour_hid_has_rebuilt(void) { return harbour_rebuild_mode; }
+
+bool zmk_harbour_hid_logical_is_pressed(uint32_t usage) {
+    for (size_t i = 0; i < ARRAY_SIZE(harbour_held); i++) {
+        if (harbour_held[i].used &&
+            ZMK_HID_USAGE(harbour_held[i].event.usage_page, harbour_held[i].event.keycode) ==
+                usage) {
+            return true;
+        }
+    }
+    return false;
+}
+
+uint8_t zmk_harbour_hid_logical_mods(void) {
+    uint8_t mods = 0;
+    for (size_t i = 0; i < ARRAY_SIZE(harbour_held); i++) {
+        const struct zmk_keycode_state_changed *event = &harbour_held[i].event;
+        if (!harbour_held[i].used) {
+            continue;
+        }
+        mods |= event->explicit_modifiers;
+        if (event->usage_page == HID_USAGE_KEY &&
+            event->keycode >= HID_USAGE_KEY_KEYBOARD_LEFTCONTROL &&
+            event->keycode <= HID_USAGE_KEY_KEYBOARD_RIGHT_GUI) {
+            mods |= BIT(event->keycode - HID_USAGE_KEY_KEYBOARD_LEFTCONTROL);
+        }
+    }
+    return mods;
+}
+
 bool zmk_harbour_hid_key_origin(uint32_t position) {
     return harbour_is_key_origin(position);
 }
@@ -68,7 +98,18 @@ static int harbour_rebuild_reports(void) {
             continue;
         }
         uint32_t usage = ZMK_HID_USAGE(held->event.usage_page, held->event.keycode);
-        zmk_hid_press(usage);
+        bool already_pressed = false;
+        for (size_t previous = 0; previous < i; previous++) {
+            if (harbour_held[previous].used && harbour_held[previous].output &&
+                harbour_held[previous].event.usage_page == held->event.usage_page &&
+                harbour_held[previous].event.keycode == held->event.keycode) {
+                already_pressed = true;
+                break;
+            }
+        }
+        if (!already_pressed) {
+            zmk_hid_press(usage);
+        }
         zmk_hid_register_mods(held->event.explicit_modifiers);
         implicit_modifiers |= held->event.implicit_modifiers;
     }
