@@ -20,6 +20,9 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #include <zmk/event_manager.h>
 #include <zmk/events/position_state_changed.h>
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+#include <zmk/harbour_hid_suppression.h>
+#endif
 #include <zmk/events/layer_state_changed.h>
 #include <zmk/events/sensor_event.h>
 
@@ -700,7 +703,8 @@ int zmk_keymap_reset_settings(void) { return -ENOTSUP; }
 #endif // IS_ENABLED(CONFIG_ZMK_KEYMAP_SETTINGS_STORAGE)
 
 int zmk_keymap_apply_position_state(uint8_t source, zmk_keymap_layer_id_t layer_id,
-                                    uint32_t position, bool pressed, int64_t timestamp) {
+                                    uint32_t position, bool pressed, int64_t timestamp,
+                                    uint32_t harbour_epoch) {
     const struct zmk_behavior_binding *binding =
         zmk_keymap_get_layer_binding_at_idx(layer_id, position);
     struct zmk_behavior_binding_event event = {
@@ -711,6 +715,9 @@ int zmk_keymap_apply_position_state(uint8_t source, zmk_keymap_layer_id_t layer_
         .source = source,
 #endif
     };
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+    event.harbour_epoch = harbour_epoch;
+#endif
 
     LOG_DBG("layer_id: %d position: %d, binding name: %s", layer_id, position,
             binding->behavior_dev);
@@ -720,6 +727,11 @@ int zmk_keymap_apply_position_state(uint8_t source, zmk_keymap_layer_id_t layer_
 
 int zmk_keymap_position_state_changed(uint8_t source, uint32_t position, bool pressed,
                                       int64_t timestamp) {
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+    uint32_t harbour_epoch = zmk_harbour_hid_epoch_for_position(position, pressed);
+#else
+    uint32_t harbour_epoch = 0;
+#endif
     if (pressed) {
         zmk_keymap_active_behavior_layer[position] = _zmk_keymap_layer_state;
     }
@@ -735,7 +747,8 @@ int zmk_keymap_position_state_changed(uint8_t source, uint32_t position, bool pr
         if (zmk_keymap_layer_active_with_state(layer_id,
                                                zmk_keymap_active_behavior_layer[position])) {
             int ret =
-                zmk_keymap_apply_position_state(source, layer_id, position, pressed, timestamp);
+                zmk_keymap_apply_position_state(source, layer_id, position, pressed, timestamp,
+                                                harbour_epoch);
             if (ret > 0) {
                 LOG_DBG("behavior processing to continue to next layer");
                 continue;

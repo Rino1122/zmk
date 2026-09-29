@@ -17,6 +17,9 @@
 #include <zmk/event_manager.h>
 #include <zmk/events/position_state_changed.h>
 #include <zmk/events/keycode_state_changed.h>
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+#include <zmk/harbour_hid_suppression.h>
+#endif
 #include <zmk/behavior.h>
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
@@ -76,6 +79,9 @@ struct behavior_hold_tap_data {
 // this data is specific for each hold-tap
 struct active_hold_tap {
     int32_t position;
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+    uint32_t harbour_epoch;
+#endif
 #if IS_ENABLED(CONFIG_ZMK_SPLIT)
     uint8_t source;
 #endif
@@ -98,6 +104,15 @@ struct active_hold_tap {
 // its key-up has been processed and the delayed work is cleaned up.
 struct active_hold_tap *undecided_hold_tap = NULL;
 struct active_hold_tap active_hold_taps[ZMK_BHV_HOLD_TAP_MAX_HELD] = {};
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+void zmk_harbour_hid_mark_pending_hold_taps(uint32_t epoch) {
+    for (size_t i = 0; i < ARRAY_SIZE(active_hold_taps); i++) {
+        if (active_hold_taps[i].position >= 0 && active_hold_taps[i].position < 50) {
+            active_hold_taps[i].harbour_epoch = epoch;
+        }
+    }
+}
+#endif
 // We capture most position_state_changed events and some modifiers_state_changed events.
 
 enum captured_event_tag {
@@ -260,6 +275,9 @@ static struct active_hold_tap *store_hold_tap(struct zmk_behavior_binding_event 
             continue;
         }
         active_hold_taps[i].position = event->position;
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+        active_hold_taps[i].harbour_epoch = event->harbour_epoch;
+#endif
 #if IS_ENABLED(CONFIG_ZMK_SPLIT)
         active_hold_taps[i].source = event->source;
 #endif
@@ -405,6 +423,9 @@ static int press_hold_binding(struct active_hold_tap *hold_tap) {
     struct zmk_behavior_binding_event event = {
         .position = hold_tap->position,
         .timestamp = hold_tap->timestamp,
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+        .harbour_epoch = hold_tap->harbour_epoch,
+#endif
 #if IS_ENABLED(CONFIG_ZMK_SPLIT)
         .source = hold_tap->source,
 #endif
@@ -419,6 +440,9 @@ static int press_tap_binding(struct active_hold_tap *hold_tap) {
     struct zmk_behavior_binding_event event = {
         .position = hold_tap->position,
         .timestamp = hold_tap->timestamp,
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+        .harbour_epoch = hold_tap->harbour_epoch,
+#endif
 #if IS_ENABLED(CONFIG_ZMK_SPLIT)
         .source = hold_tap->source,
 #endif
@@ -434,6 +458,9 @@ static int release_hold_binding(struct active_hold_tap *hold_tap) {
     struct zmk_behavior_binding_event event = {
         .position = hold_tap->position,
         .timestamp = hold_tap->timestamp,
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+        .harbour_epoch = hold_tap->harbour_epoch,
+#endif
 #if IS_ENABLED(CONFIG_ZMK_SPLIT)
         .source = hold_tap->source,
 #endif
@@ -448,6 +475,9 @@ static int release_tap_binding(struct active_hold_tap *hold_tap) {
     struct zmk_behavior_binding_event event = {
         .position = hold_tap->position,
         .timestamp = hold_tap->timestamp,
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+        .harbour_epoch = hold_tap->harbour_epoch,
+#endif
 #if IS_ENABLED(CONFIG_ZMK_SPLIT)
         .source = hold_tap->source,
 #endif

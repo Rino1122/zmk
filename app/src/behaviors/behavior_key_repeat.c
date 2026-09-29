@@ -42,6 +42,10 @@ static int on_key_repeat_binding_pressed(struct zmk_behavior_binding *binding,
     memcpy(&data->current_keycode_pressed, &data->last_keycode_pressed,
            sizeof(struct zmk_keycode_state_changed));
     data->current_keycode_pressed.timestamp = k_uptime_get();
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+    data->current_keycode_pressed.position = event.position;
+    data->current_keycode_pressed.harbour_epoch = event.harbour_epoch;
+#endif
 
     raise_zmk_keycode_state_changed(data->current_keycode_pressed);
 

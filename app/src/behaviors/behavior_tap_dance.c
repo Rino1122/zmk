@@ -15,6 +15,9 @@
 #include <zmk/event_manager.h>
 #include <zmk/events/position_state_changed.h>
 #include <zmk/events/keycode_state_changed.h>
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+#include <zmk/harbour_hid_suppression.h>
+#endif
 #include <zmk/hid.h>
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
@@ -35,6 +38,9 @@ struct active_tap_dance {
     // Tap Dance Data
     int counter;
     uint32_t position;
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+    uint32_t harbour_epoch;
+#endif
 #if IS_ENABLED(CONFIG_ZMK_SPLIT)
     uint8_t source;
 #endif
@@ -52,6 +58,15 @@ struct active_tap_dance {
 };
 
 struct active_tap_dance active_tap_dances[ZMK_BHV_TAP_DANCE_MAX_HELD] = {};
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+void zmk_harbour_hid_mark_pending_tap_dances(uint32_t epoch) {
+    for (size_t i = 0; i < ARRAY_SIZE(active_tap_dances); i++) {
+        if (active_tap_dances[i].position < 50) {
+            active_tap_dances[i].harbour_epoch = epoch;
+        }
+    }
+}
+#endif
 
 static struct active_tap_dance *find_tap_dance(uint32_t position) {
     for (int i = 0; i < ZMK_BHV_TAP_DANCE_MAX_HELD; i++) {
@@ -70,6 +85,9 @@ static int new_tap_dance(struct zmk_behavior_binding_event *event,
         if (ref_dance->position == ZMK_BHV_TAP_DANCE_POSITION_FREE) {
             ref_dance->counter = 0;
             ref_dance->position = event->position;
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+            ref_dance->harbour_epoch = event->harbour_epoch;
+#endif
 #if IS_ENABLED(CONFIG_ZMK_SPLIT)
             ref_dance->source = event->source;
 #endif
@@ -115,6 +133,9 @@ static inline int press_tap_dance_behavior(struct active_tap_dance *tap_dance, i
     struct zmk_behavior_binding_event event = {
         .position = tap_dance->position,
         .timestamp = timestamp,
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+        .harbour_epoch = tap_dance->harbour_epoch,
+#endif
 #if IS_ENABLED(CONFIG_ZMK_SPLIT)
         .source = tap_dance->source,
 #endif
@@ -128,6 +149,9 @@ static inline int release_tap_dance_behavior(struct active_tap_dance *tap_dance,
     struct zmk_behavior_binding_event event = {
         .position = tap_dance->position,
         .timestamp = timestamp,
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+        .harbour_epoch = tap_dance->harbour_epoch,
+#endif
 #if IS_ENABLED(CONFIG_ZMK_SPLIT)
         .source = tap_dance->source,
 #endif

@@ -6,6 +6,9 @@
 
 #include <zmk/behavior_queue.h>
 #include <zmk/behavior.h>
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+#include <zmk/harbour_hid_suppression.h>
+#endif
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -15,6 +18,10 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 struct q_item {
     uint32_t position;
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+    uint32_t harbour_epoch;
+    int64_t harbour_queued_at;
+#endif
 #if IS_ENABLED(CONFIG_ZMK_SPLIT)
     uint8_t source;
 #endif
@@ -37,6 +44,14 @@ static void behavior_queue_process_next(struct k_work *work) {
 
         struct zmk_behavior_binding_event event = {.position = item.position,
                                                    .timestamp = k_uptime_get(),
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+                                                   .harbour_epoch =
+                                                       item.harbour_epoch
+                                                           ? item.harbour_epoch
+                                                           : zmk_harbour_hid_epoch_for_queued(
+                                                                 item.position,
+                                                                 item.harbour_queued_at),
+#endif
 #if IS_ENABLED(CONFIG_ZMK_SPLIT)
                                                    .source = item.source
 #endif
@@ -64,6 +79,13 @@ int zmk_behavior_queue_add(const struct zmk_behavior_binding_event *event,
         .binding = binding,
         .wait = wait,
         .position = event->position,
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+        .harbour_epoch = event->harbour_epoch ? event->harbour_epoch
+                                              : (event->position < 50
+                                                     ? zmk_harbour_hid_current_epoch()
+                                                     : 0),
+        .harbour_queued_at = k_uptime_get(),
+#endif
 #if IS_ENABLED(CONFIG_ZMK_SPLIT)
         .source = event->source,
 #endif

@@ -40,13 +40,21 @@ static const struct behavior_parameter_metadata metadata = {
 static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
                                      struct zmk_behavior_binding_event event) {
     LOG_DBG("position %d keycode 0x%02X", event.position, binding->param1);
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+    return raise_zmk_keycode_state_changed_from_binding(binding->param1, true, &event);
+#else
     return raise_zmk_keycode_state_changed_from_encoded(binding->param1, true, event.timestamp);
+#endif
 }
 
 static int on_keymap_binding_released(struct zmk_behavior_binding *binding,
                                       struct zmk_behavior_binding_event event) {
     LOG_DBG("position %d keycode 0x%02X", event.position, binding->param1);
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+    return raise_zmk_keycode_state_changed_from_binding(binding->param1, false, &event);
+#else
     return raise_zmk_keycode_state_changed_from_encoded(binding->param1, false, event.timestamp);
+#endif
 }
 
 static const struct behavior_driver_api behavior_key_press_driver_api = {

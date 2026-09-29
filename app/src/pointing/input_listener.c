@@ -26,6 +26,9 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #include <zmk/hid.h>
 #include <zmk/keymap.h>
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+#include <zmk/harbour_hid_suppression.h>
+#endif
 
 #define ONE_IF_DEV_OK(n)                                                                           \
     COND_CODE_1(DT_NODE_HAS_STATUS(DT_INST_PHANDLE(n, device), okay), (1 +), (0 +))
@@ -72,6 +75,9 @@ struct input_listener_processor_data {
 
 struct input_listener_config {
     uint8_t listener_index;
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+    bool key_mouse;
+#endif
     struct input_listener_config_entry base;
     size_t layer_overrides_len;
     struct input_listener_layer_override layer_overrides[];
@@ -85,6 +91,9 @@ struct input_listener_data {
 
             uint8_t button_set;
             uint8_t button_clear;
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+            uint8_t held_buttons;
+#endif
         } mouse;
     };
 
@@ -96,6 +105,60 @@ struct input_listener_data {
     struct input_listener_processor_data base_processor_data;
     struct input_listener_processor_data layer_override_data[];
 };
+
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL) && VALID_LISTENER_COUNT > 0
+static uint8_t harbour_mouse_button_owners[ZMK_HID_MOUSE_NUM_BUTTONS];
+static uint8_t harbour_key_button_owners[ZMK_HID_MOUSE_NUM_BUTTONS];
+static uint8_t harbour_gesture_button_owners[ZMK_HID_MOUSE_NUM_BUTTONS];
+
+void zmk_harbour_hid_mouse_key_button(bool key_origin, uint8_t button, bool pressed) {
+    if (button >= ZMK_HID_MOUSE_NUM_BUTTONS) {
+        return;
+    }
+    uint8_t *source_count = key_origin ? &harbour_key_button_owners[button]
+                                       : &harbour_gesture_button_owners[button];
+    if (pressed) {
+        if (*source_count == UINT8_MAX) {
+            return;
+        }
+        (*source_count)++;
+        if (harbour_mouse_button_owners[button]++ == 0) {
+            zmk_hid_mouse_button_press(button);
+        }
+    } else {
+        if (*source_count == 0) {
+            return;
+        }
+        (*source_count)--;
+        if (--harbour_mouse_button_owners[button] == 0) {
+            zmk_hid_mouse_button_release(button);
+        }
+    }
+    zmk_endpoint_send_mouse_report();
+}
+
+static void harbour_update_mouse_button(struct input_listener_data *data, int button,
+                                        bool pressed) {
+    uint8_t bit = BIT(button);
+    if (pressed) {
+        if (data->mouse.held_buttons & bit) {
+            return;
+        }
+        data->mouse.held_buttons |= bit;
+        if (harbour_mouse_button_owners[button]++ == 0) {
+            zmk_hid_mouse_button_press(button);
+        }
+    } else {
+        if (!(data->mouse.held_buttons & bit)) {
+            return;
+        }
+        data->mouse.held_buttons &= ~bit;
+        if (--harbour_mouse_button_owners[button] == 0) {
+            zmk_hid_mouse_button_release(button);
+        }
+    }
+}
+#endif
 
 static void handle_rel_code(struct input_listener_data *data, struct input_event *evt) {
     switch (evt->code) {
@@ -312,7 +375,11 @@ static void input_handler(const struct input_listener_config *config,
         if (data->mouse.button_set != 0) {
             for (int i = 0; i < ZMK_HID_MOUSE_NUM_BUTTONS; i++) {
                 if ((data->mouse.button_set & BIT(i)) != 0) {
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+                    harbour_update_mouse_button(data, i, true);
+#else
                     zmk_hid_mouse_button_press(i);
+#endif
                 }
             }
         }
@@ -320,7 +387,11 @@ static void input_handler(const struct input_listener_config *config,
         if (data->mouse.button_clear != 0) {
             for (int i = 0; i < ZMK_HID_MOUSE_NUM_BUTTONS; i++) {
                 if ((data->mouse.button_clear & BIT(i)) != 0) {
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+                    harbour_update_mouse_button(data, i, false);
+#else
                     zmk_hid_mouse_button_release(i);
+#endif
                 }
             }
         }
@@ -381,6 +452,16 @@ static void input_handler(const struct input_listener_config *config,
 
 #define IL_OVERRIDE_DATA(node, parent) IL_EXTRACT_DATA(node, parent, node)
 
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+#define IL_KEY_MOUSE_FIELD(n)                                                                      \
+    .key_mouse = DT_NODE_HAS_COMPAT(DT_INST_PHANDLE(n, device),                                     \
+                                    zmk_behavior_mouse_key_press) ||                               \
+                 DT_NODE_HAS_COMPAT(DT_INST_PHANDLE(n, device),                                     \
+                                    zmk_behavior_input_two_axis),
+#else
+#define IL_KEY_MOUSE_FIELD(n)
+#endif
+
 #define IL_INST(n)                                                                                 \
     COND_CODE_1(                                                                                   \
         DT_NODE_HAS_STATUS(DT_INST_PHANDLE(n, device), okay),                                      \
@@ -389,6 +470,7 @@ static void input_handler(const struct input_listener_config *config,
                                      n) static const struct input_listener_config config_##n =     \
              {                                                                                     \
                  .listener_index = n,                                                              \
+                 IL_KEY_MOUSE_FIELD(n)                                                             \
                  .base = IL_EXTRACT_CONFIG(DT_DRV_INST(n), n, base),                               \
                  .layer_overrides_len = (0 DT_INST_FOREACH_CHILD(n, IL_ONE)),                      \
                  .layer_overrides = {DT_INST_FOREACH_CHILD_SEP_VARGS(n, IL_OVERRIDE, (, ), n)},    \
@@ -406,3 +488,23 @@ static void input_handler(const struct input_listener_config *config,
         ())
 
 DT_INST_FOREACH_STATUS_OKAY(IL_INST)
+
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL) && VALID_LISTENER_COUNT > 0
+void zmk_harbour_hid_release_key_mouse_buttons(void) {
+    bool changed = false;
+    for (int button = 0; button < ZMK_HID_MOUSE_NUM_BUTTONS; button++) {
+        uint8_t held = harbour_key_button_owners[button];
+        if (held != 0) {
+            harbour_key_button_owners[button] = 0;
+            harbour_mouse_button_owners[button] -= held;
+            if (harbour_mouse_button_owners[button] == 0) {
+                zmk_hid_mouse_button_release(button);
+            }
+            changed = true;
+        }
+    }
+    if (changed) {
+        zmk_endpoint_send_mouse_report();
+    }
+}
+#endif

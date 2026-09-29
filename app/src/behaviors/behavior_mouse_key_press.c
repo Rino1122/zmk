@@ -11,6 +11,9 @@
 #include <zephyr/logging/log.h>
 
 #include <zmk/behavior.h>
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+#include <zmk/harbour_hid_suppression.h>
+#endif
 #include <zmk/hid.h>
 #include <zephyr/input/input.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
@@ -40,29 +43,46 @@ static const struct behavior_parameter_metadata metadata = {
 
 #endif
 
-static void process_key_state(const struct device *dev, int32_t val, bool pressed) {
+static void process_key_state(const struct device *dev, int32_t val, bool pressed,
+                              uint32_t position) {
     for (int i = 0; i < ZMK_HID_MOUSE_NUM_BUTTONS; i++) {
         if (val & BIT(i)) {
             WRITE_BIT(val, i, 0);
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+            zmk_harbour_hid_mouse_key_button(zmk_harbour_hid_key_origin(position), i, pressed);
+#else
             input_report_key(dev, INPUT_BTN_0 + i, pressed ? 1 : 0, val == 0, K_FOREVER);
+#endif
         }
     }
 }
 
 static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
                                      struct zmk_behavior_binding_event event) {
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+    if (zmk_harbour_hid_suppress_binding(&event)) {
+        return 0;
+    }
+#endif
     LOG_DBG("position %d keycode 0x%02X", event.position, binding->param1);
 
-    process_key_state(zmk_behavior_get_binding(binding->behavior_dev), binding->param1, true);
+    process_key_state(zmk_behavior_get_binding(binding->behavior_dev), binding->param1, true,
+                      event.position);
 
     return 0;
 }
 
 static int on_keymap_binding_released(struct zmk_behavior_binding *binding,
                                       struct zmk_behavior_binding_event event) {
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+    if (zmk_harbour_hid_suppress_binding(&event)) {
+        return 0;
+    }
+#endif
     LOG_DBG("position %d keycode 0x%02X", event.position, binding->param1);
 
-    process_key_state(zmk_behavior_get_binding(binding->behavior_dev), binding->param1, false);
+    process_key_state(zmk_behavior_get_binding(binding->behavior_dev), binding->param1, false,
+                      event.position);
 
     return 0;
 }

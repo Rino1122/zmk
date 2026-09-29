@@ -34,14 +34,26 @@ static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
         zmk_behavior_get_binding(binding->behavior_dev)->config;
     switch (cfg->toggle_mode) {
     case ON:
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+        return raise_zmk_keycode_state_changed_from_binding(binding->param1, true, &event);
+#else
         return raise_zmk_keycode_state_changed_from_encoded(binding->param1, true, event.timestamp);
+#endif
     case OFF:
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+        return raise_zmk_keycode_state_changed_from_binding(binding->param1, false, &event);
+#else
         return raise_zmk_keycode_state_changed_from_encoded(binding->param1, false,
                                                             event.timestamp);
+#endif
     case FLIP:
         bool pressed = zmk_hid_is_pressed(binding->param1);
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+        return raise_zmk_keycode_state_changed_from_binding(binding->param1, !pressed, &event);
+#else
         return raise_zmk_keycode_state_changed_from_encoded(binding->param1, !pressed,
                                                             event.timestamp);
+#endif
     default:
         return -ENOTSUP;
     };

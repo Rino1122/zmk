@@ -18,6 +18,9 @@
 #include <zmk/event_manager.h>
 #include <zmk/events/position_state_changed.h>
 #include <zmk/events/keycode_state_changed.h>
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+#include <zmk/harbour_hid_suppression.h>
+#endif
 #include <zmk/hid.h>
 #include <zmk/matrix.h>
 #include <zmk/keymap.h>
@@ -283,6 +286,9 @@ static inline int press_combo_behavior(int combo_idx, const struct combo_cfg *co
     struct zmk_behavior_binding_event event = {
         .position = ZMK_VIRTUAL_KEY_POSITION_COMBO(combo_idx),
         .timestamp = timestamp,
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+        .harbour_epoch = zmk_harbour_hid_current_epoch(),
+#endif
 #if IS_ENABLED(CONFIG_ZMK_SPLIT)
         .source = ZMK_POSITION_STATE_CHANGE_SOURCE_LOCAL,
 #endif
@@ -298,6 +304,9 @@ static inline int release_combo_behavior(int combo_idx, const struct combo_cfg *
     struct zmk_behavior_binding_event event = {
         .position = ZMK_VIRTUAL_KEY_POSITION_COMBO(combo_idx),
         .timestamp = timestamp,
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+        .harbour_epoch = zmk_harbour_hid_current_epoch(),
+#endif
 #if IS_ENABLED(CONFIG_ZMK_SPLIT)
         .source = ZMK_POSITION_STATE_CHANGE_SOURCE_LOCAL,
 #endif

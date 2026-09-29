@@ -13,6 +13,9 @@
 #include <zephyr/sys/util.h> // CLAMP
 
 #include <zmk/behavior.h>
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+#include <zmk/harbour_hid_suppression.h>
+#endif
 #include <dt-bindings/zmk/pointing.h>
 
 #if IS_ENABLED(CONFIG_ZMK_POINTING_SMOOTH_SCROLLING)
@@ -42,6 +45,10 @@ struct behavior_input_two_axis_data {
     const struct device *dev;
 
     struct movement_state_2d state;
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+    int16_t harbour_key_x_speed;
+    int16_t harbour_key_y_speed;
+#endif
 };
 
 struct behavior_input_two_axis_config {
@@ -258,6 +265,11 @@ static int behavior_input_two_axis_init(const struct device *dev) {
 
 static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
                                      struct zmk_behavior_binding_event event) {
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+    if (zmk_harbour_hid_suppress_binding(&event)) {
+        return 0;
+    }
+#endif
 
     const struct device *behavior_dev = zmk_behavior_get_binding(binding->behavior_dev);
 
@@ -265,6 +277,14 @@ static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
 
     int16_t x = MOVE_X_DECODE(binding->param1);
     int16_t y = MOVE_Y_DECODE(binding->param1);
+
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+    if (zmk_harbour_hid_key_origin(event.position)) {
+        struct behavior_input_two_axis_data *data = behavior_dev->data;
+        data->harbour_key_x_speed += x;
+        data->harbour_key_y_speed += y;
+    }
+#endif
 
     behavior_input_two_axis_adjust_speed(behavior_dev, x, y);
     return 0;
@@ -272,12 +292,25 @@ static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
 
 static int on_keymap_binding_released(struct zmk_behavior_binding *binding,
                                       struct zmk_behavior_binding_event event) {
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+    if (zmk_harbour_hid_suppress_binding(&event)) {
+        return 0;
+    }
+#endif
     const struct device *behavior_dev = zmk_behavior_get_binding(binding->behavior_dev);
 
     LOG_DBG("position %d keycode 0x%02X", event.position, binding->param1);
 
     int16_t x = MOVE_X_DECODE(binding->param1);
     int16_t y = MOVE_Y_DECODE(binding->param1);
+
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+    if (zmk_harbour_hid_key_origin(event.position)) {
+        struct behavior_input_two_axis_data *data = behavior_dev->data;
+        data->harbour_key_x_speed -= x;
+        data->harbour_key_y_speed -= y;
+    }
+#endif
 
     behavior_input_two_axis_adjust_speed(behavior_dev, -x, -y);
     return 0;
@@ -302,3 +335,20 @@ static const struct behavior_driver_api behavior_input_two_axis_driver_api = {
         &behavior_input_two_axis_driver_api);
 
 DT_INST_FOREACH_STATUS_OKAY(ITA_INST)
+
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+#define STOP_KEY_MOUSE_MOTION(n)                                                                   \
+    do {                                                                                           \
+        const struct device *dev = DEVICE_DT_INST_GET(n);                                         \
+        struct behavior_input_two_axis_data *data = dev->data;                                    \
+        data->state.x.speed -= data->harbour_key_x_speed;                                         \
+        data->state.y.speed -= data->harbour_key_y_speed;                                         \
+        data->harbour_key_x_speed = 0;                                                             \
+        data->harbour_key_y_speed = 0;                                                             \
+        update_work_scheduling(dev);                                                               \
+    } while (false);
+
+void zmk_harbour_hid_stop_key_mouse_motion(void) {
+    DT_INST_FOREACH_STATUS_OKAY(STOP_KEY_MOUSE_MOTION)
+}
+#endif

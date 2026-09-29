@@ -26,6 +26,9 @@ struct zmk_behavior_binding_event {
     int layer;
     uint32_t position;
     int64_t timestamp;
+#if IS_ENABLED(CONFIG_ZMK_HARBOUR_KEY_TRIAL)
+    uint32_t harbour_epoch;
+#endif
 #if IS_ENABLED(CONFIG_ZMK_SPLIT)
     uint8_t source;
 #endif
