@@ -7,6 +7,10 @@
 #pragma once
 
 #include <zephyr/sys/util.h>
+#if IS_ENABLED(CONFIG_ZMK_PTP)
+#include <zmk/pointing/ptp_descriptor.h>
+#endif
+
 
 #include <zephyr/usb/usb_device.h>
 #include <zephyr/usb/class/usb_hid.h>
@@ -253,6 +257,10 @@ static const uint8_t zmk_hid_report_desc[] = {
     HID_END_COLLECTION,
     HID_END_COLLECTION,
 #endif // IS_ENABLED(CONFIG_ZMK_POINTING)
+#if IS_ENABLED(CONFIG_ZMK_PTP)
+    ZMK_PTP_DESCRIPTOR(0),
+    ZMK_PTP_DESCRIPTOR(1),
+#endif
 };
 
 #if IS_ENABLED(CONFIG_ZMK_USB_BOOT)
