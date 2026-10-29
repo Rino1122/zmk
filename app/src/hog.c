@@ -272,8 +272,13 @@ static int ptp_endpoint(struct bt_conn *conn, struct zmk_endpoint_instance *ep) 
 }
 static ssize_t read_ptp_input(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                              void *buf, uint16_t len, uint16_t offset) {
-    const uint8_t idle[ZMK_PTP_BODY_SIZE] = {0};
-    return bt_gatt_attr_read(conn, attr, buf, len, offset, idle, sizeof(idle));
+    struct zmk_endpoint_instance ep;
+    if (ptp_endpoint(conn, &ep)) return BT_GATT_ERR(BT_ATT_ERR_AUTHORIZATION);
+    const struct hids_report *ref = attr->user_data;
+    uint8_t current[ZMK_PTP_BODY_SIZE];
+    int err = zmk_ptp_get_input(ep, ref->id == ZMK_PTP_REPORT_ID(0) ? 0 : 1, current);
+    if (err) return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, current, sizeof(current));
 }
 static ssize_t read_ptp_feature(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                                void *buf, uint16_t len, uint16_t offset) {
@@ -369,20 +374,43 @@ BT_GATT_SERVICE_DEFINE(
                        NULL, &led_indicators),
 #endif // IS_ENABLED(CONFIG_ZMK_HID_INDICATORS)
 
-#if IS_ENABLED(CONFIG_ZMK_PTP)
-    PTP_PAD_ATTRS(0),
-    PTP_PAD_ATTRS(1),
-#endif
-
     BT_GATT_CHARACTERISTIC(BT_UUID_HIDS_CTRL_POINT, BT_GATT_CHRC_WRITE_WITHOUT_RESP,
                            BT_GATT_PERM_WRITE, NULL, write_ctrl_point, &ctrl_point));
 
+#if IS_ENABLED(CONFIG_ZMK_PTP)
+/* A GATT value is limited to 512 bytes. Each pad therefore owns one HID
+ * service/Report Map; the existing keyboard/mouse service remains unchanged. */
+static const uint8_t ptp_left_map[] = {ZMK_PTP_DESCRIPTOR(0)};
+static const uint8_t ptp_right_map[] = {ZMK_PTP_DESCRIPTOR(1)};
+BUILD_ASSERT(sizeof(ptp_left_map) <= BT_ATT_MAX_ATTRIBUTE_LEN);
+BUILD_ASSERT(sizeof(ptp_right_map) <= BT_ATT_MAX_ATTRIBUTE_LEN);
+static ssize_t read_ptp_map(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                            void *buf, uint16_t len, uint16_t offset) {
+    bool right = attr->user_data == ptp_right_map;
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, attr->user_data,
+                            right ? sizeof(ptp_right_map) : sizeof(ptp_left_map));
+}
+static uint8_t ptp_ctrl[2];
+static struct hids_info ptp_info = {.version = 0x0111, .flags = HIDS_NORMALLY_CONNECTABLE};
+#define PTP_SERVICE_ATTRS(p, map) \
+    BT_GATT_PRIMARY_SERVICE(BT_UUID_HIDS), \
+    BT_GATT_CHARACTERISTIC(BT_UUID_HIDS_INFO, BT_GATT_CHRC_READ, BT_GATT_PERM_READ, \
+        read_hids_info, NULL, &ptp_info), \
+    BT_GATT_CHARACTERISTIC(BT_UUID_HIDS_REPORT_MAP, BT_GATT_CHRC_READ, BT_GATT_PERM_READ_ENCRYPT, \
+        read_ptp_map, NULL, (void *)(map)), \
+    PTP_PAD_ATTRS(p), \
+    BT_GATT_CHARACTERISTIC(BT_UUID_HIDS_CTRL_POINT, BT_GATT_CHRC_WRITE_WITHOUT_RESP, \
+        BT_GATT_PERM_WRITE_ENCRYPT, NULL, write_ctrl_point, &ptp_ctrl[p])
+BT_GATT_SERVICE_DEFINE(ptp_left_svc, PTP_SERVICE_ATTRS(0, ptp_left_map));
+BT_GATT_SERVICE_DEFINE(ptp_right_svc, PTP_SERVICE_ATTRS(1, ptp_right_map));
+#endif
+
 /* Match a characteristic's own report-reference object, never a numeric index. */
-static const struct bt_gatt_attr *input_attribute(const struct hids_report *ref) {
-    for (size_t i = 0; i < hog_svc.attr_count; i++) {
-        const struct bt_gatt_attr *attr = &hog_svc.attrs[i];
+static const struct bt_gatt_attr *input_attribute(const struct bt_gatt_service_static *svc, const struct hids_report *ref) {
+    for (size_t i = 0; i < svc->attr_count; i++) {
+        const struct bt_gatt_attr *attr = &svc->attrs[i];
         if (!bt_uuid_cmp(attr->uuid, BT_UUID_HIDS_REPORT_REF) && attr->user_data == ref && i >= 2)
-            return &hog_svc.attrs[i - 2]; /* value, CCC, report reference */
+            return &svc->attrs[i - 2]; /* value, CCC, report reference */
     }
     return NULL;
 }
@@ -394,7 +422,7 @@ int zmk_hog_send_ptp_report(struct zmk_endpoint_instance ep, unsigned pad,
     bt_addr_le_t *addr = zmk_ble_profile_address(ep.ble.profile_index);
     struct bt_conn *conn = addr ? bt_conn_lookup_addr_le(BT_ID_DEFAULT, addr) : NULL;
     if (!conn) return -ENOTCONN;
-    const struct bt_gatt_attr *attr = input_attribute(&ptp_input[pad]);
+    const struct bt_gatt_attr *attr = input_attribute(pad ? &ptp_right_svc : &ptp_left_svc, &ptp_input[pad]);
     int err;
     if (bt_conn_get_security(conn) < BT_SECURITY_L2) err = -EACCES;
     else if (!attr) err = -ENOENT;
@@ -408,6 +436,23 @@ int zmk_hog_send_ptp_report(struct zmk_endpoint_instance ep, unsigned pad,
     bt_conn_unref(conn);
     return err;
 }
+#if IS_ENABLED(CONFIG_BT_GATT_CLIENT)
+static void ptp_mtu_exchanged(struct bt_conn *conn, uint8_t err,
+                              struct bt_gatt_exchange_params *params) {
+    ARG_UNUSED(params);
+    LOG_INF("PTP BLE MTU=%u exchange=%u", bt_gatt_get_mtu(conn), err);
+}
+static struct bt_gatt_exchange_params ptp_mtu[CONFIG_BT_MAX_CONN];
+static void ptp_security_changed(struct bt_conn *conn, bt_security_t level, enum bt_security_err err) {
+    struct bt_conn_info info;
+    if (err || level < BT_SECURITY_L2 || bt_conn_get_info(conn, &info) ||
+        info.role != BT_CONN_ROLE_PERIPHERAL) return;
+    struct bt_gatt_exchange_params *params = &ptp_mtu[bt_conn_index(conn)];
+    params->func = ptp_mtu_exchanged;
+    int result = bt_gatt_exchange_mtu(conn, params);
+    if (result && result != -EALREADY) LOG_WRN("PTP BLE MTU request: %d", result);
+}
+#endif
 static void ptp_connected(struct bt_conn *conn, uint8_t err) {
     struct bt_conn_info info;
     if (err || bt_conn_get_info(conn, &info) || info.role != BT_CONN_ROLE_PERIPHERAL) return;
@@ -423,7 +468,12 @@ static void ptp_disconnected(struct bt_conn *conn, uint8_t reason) {
     if (profile >= 0) zmk_ptp_reset((struct zmk_endpoint_instance){.transport = ZMK_TRANSPORT_BLE,
                                                                 .ble = {.profile_index = profile}});
 }
-BT_CONN_CB_DEFINE(ptp_conn_callbacks) = {.connected = ptp_connected, .disconnected = ptp_disconnected};
+BT_CONN_CB_DEFINE(ptp_conn_callbacks) = {
+    .connected = ptp_connected, .disconnected = ptp_disconnected,
+#if IS_ENABLED(CONFIG_BT_GATT_CLIENT)
+    .security_changed = ptp_security_changed,
+#endif
+};
 #endif
 
 K_THREAD_STACK_DEFINE(hog_q_stack, CONFIG_ZMK_BLE_THREAD_STACK_SIZE);
@@ -443,7 +493,7 @@ void send_keyboard_report_callback(struct k_work *work) {
         }
 
         struct bt_gatt_notify_params notify_params = {
-            .attr = input_attribute(&input),
+            .attr = input_attribute(&hog_svc, &input),
             .data = &report,
             .len = sizeof(report),
         };
@@ -495,7 +545,7 @@ void send_consumer_report_callback(struct k_work *work) {
         }
 
         struct bt_gatt_notify_params notify_params = {
-            .attr = input_attribute(&consumer_input),
+            .attr = input_attribute(&hog_svc, &consumer_input),
             .data = &report,
             .len = sizeof(report),
         };
@@ -548,7 +598,7 @@ void send_mouse_report_callback(struct k_work *work) {
         }
 
         struct bt_gatt_notify_params notify_params = {
-            .attr = input_attribute(&mouse_input),
+            .attr = input_attribute(&hog_svc, &mouse_input),
             .data = &report,
             .len = sizeof(report),
         };

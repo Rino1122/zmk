@@ -106,8 +106,9 @@ static int get_report_cb(const struct device *dev, struct usb_setup_packet *setu
         if ((setup->wValue & 0xff) == ZMK_PTP_REPORT_ID(0) ||
             (setup->wValue & 0xff) == ZMK_PTP_REPORT_ID(1)) {
             static uint8_t idle[1 + ZMK_PTP_BODY_SIZE];
-            memset(idle, 0, sizeof(idle));
             idle[0] = setup->wValue & 0xff;
+            zmk_ptp_get_input((struct zmk_endpoint_instance){.transport = ZMK_TRANSPORT_USB},
+                              idle[0] == ZMK_PTP_REPORT_ID(0) ? 0 : 1, idle + 1);
             *data = idle; *len = sizeof(idle);
             return 0;
         }
@@ -227,8 +228,9 @@ static int zmk_usb_hid_send_report(const uint8_t *report, size_t len) {
     case USB_DC_UNKNOWN:
         return -ENODEV;
     default:
-        k_sem_take(&hid_sem, K_MSEC(30));
-        int err = hid_int_ep_write(hid_dev, report, len, NULL);
+        int err = k_sem_take(&hid_sem, K_MSEC(30));
+        if (err) return err;
+        err = hid_int_ep_write(hid_dev, report, len, NULL);
 
         if (err) {
             k_sem_give(&hid_sem);
@@ -293,7 +295,11 @@ static int zmk_usb_hid_init(void) {
         return -EINVAL;
     }
 
+#if IS_ENABLED(CONFIG_ZMK_PTP)
+    usb_hid_register_device(hid_dev, zmk_ptp_usb_report_desc, sizeof(zmk_ptp_usb_report_desc), &ops);
+#else
     usb_hid_register_device(hid_dev, zmk_hid_report_desc, sizeof(zmk_hid_report_desc), &ops);
+#endif
 
 #if IS_ENABLED(CONFIG_ZMK_USB_BOOT)
     usb_hid_set_proto_code(hid_dev, HID_BOOT_IFACE_CODE_KEYBOARD);
