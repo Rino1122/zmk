@@ -170,6 +170,34 @@ int zmk_ptp_get_input(struct zmk_endpoint_instance ep, unsigned pad,
     k_spin_unlock(&state_lock, key);
     return 0;
 }
+void zmk_ptp_note_usb_feature(uint8_t id, bool write, uint16_t requested, size_t length,
+                              const uint8_t *data, int result) {
+    int pad = zmk_ptp_feature_pad(id);
+    if (pad < 0)
+        return;
+    k_spinlock_key_t key = k_spin_lock(&state_lock);
+    struct zmk_ptp_usb_diagnostics *d = &state_for(0, pad)->status.usb;
+    d->last_id = id;
+    d->requested = requested;
+    d->length = length;
+    d->data0 = data && length ? data[0] : 0;
+    d->data1 = data && length > 1 ? data[1] : 0;
+    d->result = result;
+    unsigned mask = 1u << ((id & 15) - 1);
+    if (write) {
+        d->sets++;
+        d->set_mask |= mask;
+        if (id == ZMK_PTP_MODE_ID(pad)) {
+            d->mode_sets++;
+            d->mode_value = d->data1;
+            d->mode_result = result;
+        }
+    } else {
+        d->gets++;
+        d->get_mask |= mask;
+    }
+    k_spin_unlock(&state_lock, key);
+}
 int zmk_ptp_get_feature(struct zmk_endpoint_instance ep, uint8_t id, uint8_t *data, size_t cap) {
     int index = endpoint_index(ep), pad = zmk_ptp_feature_pad(id);
     if (index < 0 || pad < 0)
@@ -244,6 +272,8 @@ void zmk_ptp_reset(struct zmk_endpoint_instance ep) {
     for (unsigned pad = 0; pad < 2; pad++) {
         struct pad_state *s = state_for(index, pad);
         invalidate(s);
+        if (ep.transport == ZMK_TRANSPORT_USB)
+            s->status.usb.resets++;
         zmk_ptp_protocol_init(&s->status.protocol);
     }
     k_spin_unlock(&state_lock, key);

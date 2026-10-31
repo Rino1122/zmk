@@ -73,6 +73,8 @@ static int get_report_cb(const struct device *dev, struct usb_setup_packet *setu
             feature[0] = setup->wValue & HID_GET_REPORT_ID_MASK;
             int size = zmk_ptp_get_feature((struct zmk_endpoint_instance){.transport = ZMK_TRANSPORT_USB},
                                            feature[0], feature + 1, sizeof(feature) - 1);
+            zmk_ptp_note_usb_feature(feature[0], false, setup->wLength,
+                                      size < 0 ? 0 : size + 1, feature, size < 0 ? size : 0);
             if (size < 0) return size;
             *data = feature;
             *len = size + 1;
@@ -152,9 +154,12 @@ static int set_report_cb(const struct device *dev, struct usb_setup_packet *setu
 #if IS_ENABLED(CONFIG_ZMK_PTP)
         if (zmk_ptp_feature_pad(setup->wValue & HID_GET_REPORT_ID_MASK) >= 0) {
             uint8_t id = setup->wValue & HID_GET_REPORT_ID_MASK;
-            if (*len < 1 || (*data)[0] != id) return -EINVAL;
-            return zmk_ptp_set_feature((struct zmk_endpoint_instance){.transport = ZMK_TRANSPORT_USB},
-                                       id, *data + 1, *len - 1);
+            int result = -EINVAL;
+            if (*len >= 1 && *data && (*data)[0] == id)
+                result = zmk_ptp_set_feature((struct zmk_endpoint_instance){.transport = ZMK_TRANSPORT_USB},
+                                              id, *data + 1, *len - 1);
+            zmk_ptp_note_usb_feature(id, true, setup->wLength, *len < 0 ? 0 : *len, *data, result);
+            return result;
         }
 #endif
         switch (setup->wValue & HID_GET_REPORT_ID_MASK) {
