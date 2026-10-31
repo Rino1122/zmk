@@ -308,11 +308,13 @@ int zmk_usb_hid_send_ptp_report(unsigned pad, const uint8_t body[ZMK_PTP_BODY_SI
     if (pad >= ZMK_PTP_PAD_COUNT || !body) return -EINVAL;
     if (!ptp_hid_dev) return -ENODEV;
     if (!zmk_usb_is_hid_ready() || zmk_usb_get_status() == USB_DC_SUSPEND) return -ENOTCONN;
-    uint8_t report[1 + ZMK_PTP_BODY_SIZE];
+    /* nrfx transfers asynchronously from this address without copying it.
+     * Hold storage until int_in_ready releases the semaphore. Acquire before
+     * touching the buffer, including on failed/busy sends. */
+    static uint8_t report[1 + ZMK_PTP_BODY_SIZE];
+    if (k_sem_take(&ptp_hid_sem, K_NO_WAIT)) return -EAGAIN;
     report[0] = ZMK_PTP_REPORT_ID(pad);
     memcpy(report + 1, body, ZMK_PTP_BODY_SIZE);
-    /* The dedicated PTP endpoint has its own bounded retry queue. */
-    if (k_sem_take(&ptp_hid_sem, K_NO_WAIT)) return -EAGAIN;
     int err = hid_int_ep_write(ptp_hid_dev, report, sizeof(report), NULL);
     if (err) k_sem_give(&ptp_hid_sem);
     return err;
