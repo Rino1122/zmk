@@ -227,8 +227,8 @@ int zmk_ptp_set_feature(struct zmk_endpoint_instance ep, uint8_t id, const uint8
             len && data ? data[0] : 0, err);
     return err;
 }
-int zmk_ptp_submit(struct zmk_endpoint_instance ep, unsigned pad, uint32_t generation,
-                   const struct zmk_ptp_frame *frame) {
+static int submit_frame(struct zmk_endpoint_instance ep, unsigned pad, uint32_t generation,
+                        const struct zmk_ptp_frame *frame, bool retryable) {
     int index = endpoint_index(ep);
     if (index < 0 || pad >= ZMK_PTP_PAD_COUNT)
         return -EINVAL;
@@ -246,7 +246,9 @@ int zmk_ptp_submit(struct zmk_endpoint_instance ep, unsigned pad, uint32_t gener
         err = -EAGAIN;
     else {
         err = k_msgq_put(&ptp_frames, &queued, K_NO_WAIT);
-        if (err) {
+        if (err && retryable) {
+            err = -EAGAIN; /* Caller retains and retries the unaccepted frame. */
+        } else if (err) {
             s->status.dropped++;
             invalidate(s);
         }
@@ -254,6 +256,14 @@ int zmk_ptp_submit(struct zmk_endpoint_instance ep, unsigned pad, uint32_t gener
     k_spin_unlock(&state_lock, key);
     schedule();
     return err;
+}
+int zmk_ptp_submit(struct zmk_endpoint_instance ep, unsigned pad, uint32_t generation,
+                   const struct zmk_ptp_frame *frame) {
+    return submit_frame(ep, pad, generation, frame, false);
+}
+int zmk_ptp_try_submit(struct zmk_endpoint_instance ep, unsigned pad, uint32_t generation,
+                       const struct zmk_ptp_frame *frame) {
+    return submit_frame(ep, pad, generation, frame, true);
 }
 void zmk_ptp_cancel(struct zmk_endpoint_instance ep, unsigned pad) {
     int index = endpoint_index(ep);

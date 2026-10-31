@@ -38,3 +38,9 @@ int zmk_hog_send_ptp_report(struct zmk_endpoint_instance endpoint, unsigned pad,
 
 void zmk_ptp_note_usb_feature(uint8_t id, bool write, uint16_t requested, size_t length,
                               const uint8_t *data, int result);
+
+/* For producers that can pause: full queue returns -EAGAIN without invalidating
+ * accepted frames. Retain/retry the frame (including DOWN/UP) or cancel explicitly.
+ * Never use this to silently drop sensor transitions. */
+int zmk_ptp_try_submit(struct zmk_endpoint_instance ep, unsigned pad, uint32_t generation,
+                       const struct zmk_ptp_frame *frame);
