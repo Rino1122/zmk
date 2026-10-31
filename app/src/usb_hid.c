@@ -63,11 +63,18 @@ static uint8_t *get_keyboard_report(size_t *len) {
     return (uint8_t *)report;
 }
 
-static int get_report_cb(const struct device *dev, struct usb_setup_packet *setup, int32_t *len,
-                         uint8_t **data) {
+#if IS_ENABLED(CONFIG_ZMK_PTP)
+/* Independent interrupt endpoint and backpressure: PTP cannot consume the
+ * keyboard/mouse semaphore, and neither callback can address the other map. */
+BUILD_ASSERT(CONFIG_USB_HID_DEVICE_COUNT >= 2, "PTP requires HID_1");
+static const struct device *ptp_hid_dev;
+static K_SEM_DEFINE(ptp_hid_sem, 1, 1);
+static void ptp_in_ready_cb(const struct device *dev) { k_sem_give(&ptp_hid_sem); }
+static int ptp_get_report_cb(const struct device *dev, struct usb_setup_packet *setup,
+                             int32_t *len, uint8_t **data) {
+    if (dev != ptp_hid_dev) return -ENOTSUP;
     switch (setup->wValue & HID_GET_REPORT_TYPE_MASK) {
     case HID_REPORT_TYPE_FEATURE:
-#if IS_ENABLED(CONFIG_ZMK_PTP)
         if (zmk_ptp_feature_pad(setup->wValue & HID_GET_REPORT_ID_MASK) >= 0) {
             static uint8_t feature[257];
             feature[0] = setup->wValue & HID_GET_REPORT_ID_MASK;
@@ -80,7 +87,48 @@ static int get_report_cb(const struct device *dev, struct usb_setup_packet *setu
             *len = size + 1;
             return 0;
         }
+        break;
+    case HID_REPORT_TYPE_INPUT:
+        if ((setup->wValue & 0xff) == ZMK_PTP_REPORT_ID(0)) {
+            static uint8_t idle[1 + ZMK_PTP_BODY_SIZE];
+            idle[0] = setup->wValue & 0xff;
+            zmk_ptp_get_input((struct zmk_endpoint_instance){.transport = ZMK_TRANSPORT_USB},
+                              0, idle + 1);
+            *data = idle; *len = sizeof(idle);
+            return 0;
+        }
+        break;
+    }
+    return -ENOTSUP;
+}
+static int ptp_set_report_cb(const struct device *dev, struct usb_setup_packet *setup,
+                             int32_t *len, uint8_t **data) {
+    if (dev != ptp_hid_dev) return -ENOTSUP;
+    if ((setup->wValue & HID_GET_REPORT_TYPE_MASK) == HID_REPORT_TYPE_FEATURE) {
+        if (zmk_ptp_feature_pad(setup->wValue & HID_GET_REPORT_ID_MASK) >= 0) {
+            uint8_t id = setup->wValue & HID_GET_REPORT_ID_MASK;
+            int result = -EINVAL;
+            if (*len >= 1 && *data && (*data)[0] == id)
+                result = zmk_ptp_set_feature((struct zmk_endpoint_instance){.transport = ZMK_TRANSPORT_USB},
+                                              id, *data + 1, *len - 1);
+            zmk_ptp_note_usb_feature(id, true, setup->wLength, *len < 0 ? 0 : *len, *data, result);
+            return result;
+        }
+    }
+    return -ENOTSUP;
+}
+static const struct hid_ops ptp_ops = {
+    .int_in_ready = ptp_in_ready_cb,
+    .get_report = ptp_get_report_cb,
+    .set_report = ptp_set_report_cb,
+};
 #endif
+
+static int get_report_cb(const struct device *dev, struct usb_setup_packet *setup, int32_t *len,
+                         uint8_t **data) {
+    if (dev != hid_dev) return -ENOTSUP;
+    switch (setup->wValue & HID_GET_REPORT_TYPE_MASK) {
+    case HID_REPORT_TYPE_FEATURE:
         switch (setup->wValue & HID_GET_REPORT_ID_MASK) {
 #if IS_ENABLED(CONFIG_ZMK_POINTING_SMOOTH_SCROLLING)
         case ZMK_HID_REPORT_ID_MOUSE:
@@ -104,16 +152,6 @@ static int get_report_cb(const struct device *dev, struct usb_setup_packet *setu
         }
         break;
     case HID_REPORT_TYPE_INPUT:
-#if IS_ENABLED(CONFIG_ZMK_PTP)
-        if ((setup->wValue & 0xff) == ZMK_PTP_REPORT_ID(0)) {
-            static uint8_t idle[1 + ZMK_PTP_BODY_SIZE];
-            idle[0] = setup->wValue & 0xff;
-            zmk_ptp_get_input((struct zmk_endpoint_instance){.transport = ZMK_TRANSPORT_USB},
-                              0, idle + 1);
-            *data = idle; *len = sizeof(idle);
-            return 0;
-        }
-#endif
         switch (setup->wValue & HID_GET_REPORT_ID_MASK) {
         case ZMK_HID_REPORT_ID_KEYBOARD: {
             size_t size;
@@ -148,19 +186,9 @@ static int get_report_cb(const struct device *dev, struct usb_setup_packet *setu
 
 static int set_report_cb(const struct device *dev, struct usb_setup_packet *setup, int32_t *len,
                          uint8_t **data) {
+    if (dev != hid_dev) return -ENOTSUP;
     switch (setup->wValue & HID_GET_REPORT_TYPE_MASK) {
     case HID_REPORT_TYPE_FEATURE:
-#if IS_ENABLED(CONFIG_ZMK_PTP)
-        if (zmk_ptp_feature_pad(setup->wValue & HID_GET_REPORT_ID_MASK) >= 0) {
-            uint8_t id = setup->wValue & HID_GET_REPORT_ID_MASK;
-            int result = -EINVAL;
-            if (*len >= 1 && *data && (*data)[0] == id)
-                result = zmk_ptp_set_feature((struct zmk_endpoint_instance){.transport = ZMK_TRANSPORT_USB},
-                                              id, *data + 1, *len - 1);
-            zmk_ptp_note_usb_feature(id, true, setup->wLength, *len < 0 ? 0 : *len, *data, result);
-            return result;
-        }
-#endif
         switch (setup->wValue & HID_GET_REPORT_ID_MASK) {
 #if IS_ENABLED(CONFIG_ZMK_POINTING_SMOOTH_SCROLLING)
         case ZMK_HID_REPORT_ID_MOUSE:
@@ -231,7 +259,7 @@ static int zmk_usb_hid_send_report(const uint8_t *report, size_t len) {
     case USB_DC_DISCONNECTED:
     case USB_DC_UNKNOWN:
         return -ENODEV;
-    default:
+    default: {
         int err = k_sem_take(&hid_sem, K_MSEC(30));
         if (err) return err;
         err = hid_int_ep_write(hid_dev, report, len, NULL);
@@ -241,6 +269,7 @@ static int zmk_usb_hid_send_report(const uint8_t *report, size_t len) {
         }
 
         return err;
+    }
     }
 }
 
@@ -277,17 +306,15 @@ int zmk_usb_hid_send_mouse_report() {
 #if IS_ENABLED(CONFIG_ZMK_PTP)
 int zmk_usb_hid_send_ptp_report(unsigned pad, const uint8_t body[ZMK_PTP_BODY_SIZE]) {
     if (pad >= ZMK_PTP_PAD_COUNT || !body) return -EINVAL;
+    if (!ptp_hid_dev) return -ENODEV;
     if (!zmk_usb_is_hid_ready() || zmk_usb_get_status() == USB_DC_SUSPEND) return -ENOTCONN;
-#if IS_ENABLED(CONFIG_ZMK_USB_BOOT)
-    if (hid_protocol == HID_PROTOCOL_BOOT) return -EACCES;
-#endif
     uint8_t report[1 + ZMK_PTP_BODY_SIZE];
     report[0] = ZMK_PTP_REPORT_ID(pad);
     memcpy(report + 1, body, ZMK_PTP_BODY_SIZE);
-    /* PTP never waits behind keyboard reports. The PTP queue handles retries/cancellation. */
-    if (k_sem_take(&hid_sem, K_NO_WAIT)) return -EAGAIN;
-    int err = hid_int_ep_write(hid_dev, report, sizeof(report), NULL);
-    if (err) k_sem_give(&hid_sem);
+    /* The dedicated PTP endpoint has its own bounded retry queue. */
+    if (k_sem_take(&ptp_hid_sem, K_NO_WAIT)) return -EAGAIN;
+    int err = hid_int_ep_write(ptp_hid_dev, report, sizeof(report), NULL);
+    if (err) k_sem_give(&ptp_hid_sem);
     return err;
 }
 #endif
@@ -299,18 +326,22 @@ static int zmk_usb_hid_init(void) {
         return -EINVAL;
     }
 
-#if IS_ENABLED(CONFIG_ZMK_PTP)
-    usb_hid_register_device(hid_dev, zmk_ptp_usb_report_desc, sizeof(zmk_ptp_usb_report_desc), &ops);
-#else
     usb_hid_register_device(hid_dev, zmk_hid_report_desc, sizeof(zmk_hid_report_desc), &ops);
-#endif
 
 #if IS_ENABLED(CONFIG_ZMK_USB_BOOT)
     usb_hid_set_proto_code(hid_dev, HID_BOOT_IFACE_CODE_KEYBOARD);
 #endif /* IS_ENABLED(CONFIG_ZMK_USB_BOOT) */
 
-    usb_hid_init(hid_dev);
-
+    int err = usb_hid_init(hid_dev);
+    if (err) return err;
+#if IS_ENABLED(CONFIG_ZMK_PTP)
+    ptp_hid_dev = device_get_binding("HID_1");
+    if (!ptp_hid_dev) return -ENODEV;
+    usb_hid_register_device(ptp_hid_dev, zmk_ptp_usb_report_desc,
+                            sizeof(zmk_ptp_usb_report_desc), &ptp_ops);
+    err = usb_hid_init(ptp_hid_dev);
+    if (err) return err;
+#endif
     return 0;
 }
 

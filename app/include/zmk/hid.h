@@ -110,7 +110,6 @@ static const uint8_t zmk_hid_report_desc[] = {
 };
 #if IS_ENABLED(CONFIG_ZMK_PTP)
 static const uint8_t zmk_ptp_usb_report_desc[] = {
-#include <zmk/hid_report_descriptor.inc>
     ZMK_PTP_DESCRIPTOR(0),
 };
 #endif

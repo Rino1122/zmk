@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT */
-/* Initializer fragment shared by the legacy map and the combined USB map. */
+/* Legacy keyboard, consumer and mouse map, shared unchanged by USB and BLE. */
 
     HID_USAGE_PAGE(HID_USAGE_GEN_DESKTOP),
     HID_USAGE(HID_USAGE_GD_KEYBOARD),
