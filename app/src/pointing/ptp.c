@@ -84,7 +84,7 @@ static void send_pending(struct k_work *work) {
     bool retry = false;
     /* Releases bypass the finite movement queue and retain the last coordinates. */
     for (unsigned i = 0; i < ENDPOINT_COUNT; i++)
-        for (unsigned pad = 0; pad < 2; pad++) {
+        for (unsigned pad = 0; pad < ZMK_PTP_PAD_COUNT; pad++) {
             uint8_t up[ZMK_PTP_BODY_SIZE];
             uint32_t generation;
             k_spinlock_key_t key = k_spin_lock(&state_lock);
@@ -153,7 +153,7 @@ static void send_pending(struct k_work *work) {
 }
 int zmk_ptp_get_status(struct zmk_endpoint_instance ep, unsigned pad, struct zmk_ptp_status *out) {
     int index = endpoint_index(ep);
-    if (index < 0 || pad >= 2 || !out)
+    if (index < 0 || pad >= ZMK_PTP_PAD_COUNT || !out)
         return -EINVAL;
     k_spinlock_key_t key = k_spin_lock(&state_lock);
     *out = state_for(index, pad)->status;
@@ -163,7 +163,7 @@ int zmk_ptp_get_status(struct zmk_endpoint_instance ep, unsigned pad, struct zmk
 int zmk_ptp_get_input(struct zmk_endpoint_instance ep, unsigned pad,
                       uint8_t body[ZMK_PTP_BODY_SIZE]) {
     int index = endpoint_index(ep);
-    if (index < 0 || pad >= 2 || !body)
+    if (index < 0 || pad >= ZMK_PTP_PAD_COUNT || !body)
         return -EINVAL;
     k_spinlock_key_t key = k_spin_lock(&state_lock);
     memcpy(body, state_for(index, pad)->last, ZMK_PTP_BODY_SIZE);
@@ -230,7 +230,7 @@ int zmk_ptp_set_feature(struct zmk_endpoint_instance ep, uint8_t id, const uint8
 int zmk_ptp_submit(struct zmk_endpoint_instance ep, unsigned pad, uint32_t generation,
                    const struct zmk_ptp_frame *frame) {
     int index = endpoint_index(ep);
-    if (index < 0 || pad >= 2)
+    if (index < 0 || pad >= ZMK_PTP_PAD_COUNT)
         return -EINVAL;
     struct queued_frame queued = {.endpoint = ep, .pad = pad, .generation = generation};
     int err = zmk_ptp_encode(frame, queued.body);
@@ -257,7 +257,7 @@ int zmk_ptp_submit(struct zmk_endpoint_instance ep, unsigned pad, uint32_t gener
 }
 void zmk_ptp_cancel(struct zmk_endpoint_instance ep, unsigned pad) {
     int index = endpoint_index(ep);
-    if (index < 0 || pad >= 2)
+    if (index < 0 || pad >= ZMK_PTP_PAD_COUNT)
         return;
     k_spinlock_key_t key = k_spin_lock(&state_lock);
     invalidate(state_for(index, pad));
@@ -269,7 +269,7 @@ void zmk_ptp_reset(struct zmk_endpoint_instance ep) {
     if (index < 0)
         return;
     k_spinlock_key_t key = k_spin_lock(&state_lock);
-    for (unsigned pad = 0; pad < 2; pad++) {
+    for (unsigned pad = 0; pad < ZMK_PTP_PAD_COUNT; pad++) {
         struct pad_state *s = state_for(index, pad);
         invalidate(s);
         if (ep.transport == ZMK_TRANSPORT_USB)
@@ -284,10 +284,10 @@ static int endpoint_listener(const zmk_event_t *event) {
     const struct zmk_endpoint_changed *changed = as_zmk_endpoint_changed(event);
     if (changed) {
         /* Keep the live connection's negotiation when merely selecting it again. */
-        for (unsigned pad = 0; pad < 2; pad++)
+        for (unsigned pad = 0; pad < ZMK_PTP_PAD_COUNT; pad++)
             zmk_ptp_cancel(previous, pad);
         previous = changed->endpoint;
-        for (unsigned pad = 0; pad < 2; pad++)
+        for (unsigned pad = 0; pad < ZMK_PTP_PAD_COUNT; pad++)
             zmk_ptp_cancel(previous, pad);
     }
     return ZMK_EV_EVENT_BUBBLE;

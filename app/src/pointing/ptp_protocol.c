@@ -115,3 +115,10 @@ void zmk_ptp_encode_up(uint8_t body[ZMK_PTP_BODY_SIZE]) {
     for (unsigned i = 0; i < ZMK_PTP_CONTACTS; i++)
         body[i * 6] &= ~ZMK_PTP_TIP;
 }
+
+int zmk_ptp_map_region(unsigned region, uint16_t local_x, uint16_t *surface_x) {
+    if (region > 1 || !surface_x) return -EINVAL;
+    if (local_x > ZMK_PTP_COORD_MAX) return -ERANGE;
+    *surface_x = local_x / 2 + (region ? 16384 : 0);
+    return 0;
+}

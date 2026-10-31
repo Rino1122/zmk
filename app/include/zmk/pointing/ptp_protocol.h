@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define ZMK_PTP_PAD_COUNT 2
+#define ZMK_PTP_PAD_COUNT 1 /* One host surface; two physical sensor regions. */
 #define ZMK_PTP_CONTACTS 4
 #define ZMK_PTP_BODY_SIZE 27
 #define ZMK_PTP_REPORT_ID(pad) (0x10 + (pad) * 0x10)
@@ -40,3 +40,6 @@ int zmk_ptp_feature_set(struct zmk_ptp_protocol *state, uint8_t id, const uint8_
                         size_t length);
 int zmk_ptp_encode(const struct zmk_ptp_frame *frame, uint8_t body[ZMK_PTP_BODY_SIZE]);
 void zmk_ptp_encode_up(uint8_t body[ZMK_PTP_BODY_SIZE]);
+
+/* Regions 0=left, 1=right. The virtual surface has no artificial gap. */
+int zmk_ptp_map_region(unsigned region, uint16_t local_x, uint16_t *surface_x);

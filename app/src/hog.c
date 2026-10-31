@@ -254,7 +254,6 @@ static ssize_t write_ctrl_point(struct bt_conn *conn, const struct bt_gatt_attr 
 #if IS_ENABLED(CONFIG_ZMK_PTP)
 static struct hids_report ptp_input[] = {
     {.id = ZMK_PTP_REPORT_ID(0), .type = HIDS_INPUT},
-    {.id = ZMK_PTP_REPORT_ID(1), .type = HIDS_INPUT},
 };
 #define PTP_FEATURE_REFS(p) \
     {.id=ZMK_PTP_CAPS_ID(p),.type=HIDS_FEATURE}, \
@@ -262,7 +261,7 @@ static struct hids_report ptp_input[] = {
     {.id=ZMK_PTP_MODE_ID(p),.type=HIDS_FEATURE}, \
     {.id=ZMK_PTP_SELECT_ID(p),.type=HIDS_FEATURE}, \
     {.id=ZMK_PTP_LATENCY_ID(p),.type=HIDS_FEATURE}
-static struct hids_report ptp_features[] = {PTP_FEATURE_REFS(0), PTP_FEATURE_REFS(1)};
+static struct hids_report ptp_features[] = {PTP_FEATURE_REFS(0)};
 static int ptp_endpoint(struct bt_conn *conn, struct zmk_endpoint_instance *ep) {
     int profile = zmk_ble_profile_index(bt_conn_get_dst(conn));
     if (profile < 0 || bt_conn_get_security(conn) < BT_SECURITY_L2) return -EACCES;
@@ -274,9 +273,8 @@ static ssize_t read_ptp_input(struct bt_conn *conn, const struct bt_gatt_attr *a
                              void *buf, uint16_t len, uint16_t offset) {
     struct zmk_endpoint_instance ep;
     if (ptp_endpoint(conn, &ep)) return BT_GATT_ERR(BT_ATT_ERR_AUTHORIZATION);
-    const struct hids_report *ref = attr->user_data;
     uint8_t current[ZMK_PTP_BODY_SIZE];
-    int err = zmk_ptp_get_input(ep, ref->id == ZMK_PTP_REPORT_ID(0) ? 0 : 1, current);
+    int err = zmk_ptp_get_input(ep, 0, current);
     if (err) return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
     return bt_gatt_attr_read(conn, attr, buf, len, offset, current, sizeof(current));
 }
@@ -378,19 +376,15 @@ BT_GATT_SERVICE_DEFINE(
                            BT_GATT_PERM_WRITE, NULL, write_ctrl_point, &ctrl_point));
 
 #if IS_ENABLED(CONFIG_ZMK_PTP)
-/* A GATT value is limited to 512 bytes. Each pad therefore owns one HID
- * service/Report Map; the existing keyboard/mouse service remains unchanged. */
-static const uint8_t ptp_left_map[] = {ZMK_PTP_DESCRIPTOR(0)};
-static const uint8_t ptp_right_map[] = {ZMK_PTP_DESCRIPTOR(1)};
-BUILD_ASSERT(sizeof(ptp_left_map) <= BT_ATT_MAX_ATTRIBUTE_LEN);
-BUILD_ASSERT(sizeof(ptp_right_map) <= BT_ATT_MAX_ATTRIBUTE_LEN);
+/* One unified PTP service; the legacy keyboard/mouse service is unchanged. */
+static const uint8_t ptp_surface_map[] = {ZMK_PTP_DESCRIPTOR(0)};
+BUILD_ASSERT(sizeof(ptp_surface_map) <= BT_ATT_MAX_ATTRIBUTE_LEN);
 static ssize_t read_ptp_map(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                             void *buf, uint16_t len, uint16_t offset) {
-    bool right = attr->user_data == ptp_right_map;
     return bt_gatt_attr_read(conn, attr, buf, len, offset, attr->user_data,
-                            right ? sizeof(ptp_right_map) : sizeof(ptp_left_map));
+                            sizeof(ptp_surface_map));
 }
-static uint8_t ptp_ctrl[2];
+static uint8_t ptp_ctrl[ZMK_PTP_PAD_COUNT];
 static struct hids_info ptp_info = {.version = 0x0111, .flags = HIDS_NORMALLY_CONNECTABLE};
 #define PTP_SERVICE_ATTRS(p, map) \
     BT_GATT_PRIMARY_SERVICE(BT_UUID_HIDS), \
@@ -401,8 +395,7 @@ static struct hids_info ptp_info = {.version = 0x0111, .flags = HIDS_NORMALLY_CO
     PTP_PAD_ATTRS(p), \
     BT_GATT_CHARACTERISTIC(BT_UUID_HIDS_CTRL_POINT, BT_GATT_CHRC_WRITE_WITHOUT_RESP, \
         BT_GATT_PERM_WRITE_ENCRYPT, NULL, write_ctrl_point, &ptp_ctrl[p])
-BT_GATT_SERVICE_DEFINE(ptp_left_svc, PTP_SERVICE_ATTRS(0, ptp_left_map));
-BT_GATT_SERVICE_DEFINE(ptp_right_svc, PTP_SERVICE_ATTRS(1, ptp_right_map));
+BT_GATT_SERVICE_DEFINE(ptp_surface_svc, PTP_SERVICE_ATTRS(0, ptp_surface_map));
 #endif
 
 /* Match a characteristic's own report-reference object, never a numeric index. */
@@ -417,12 +410,12 @@ static const struct bt_gatt_attr *input_attribute(const struct bt_gatt_service_s
 #if IS_ENABLED(CONFIG_ZMK_PTP)
 int zmk_hog_send_ptp_report(struct zmk_endpoint_instance ep, unsigned pad,
                            const uint8_t body[ZMK_PTP_BODY_SIZE]) {
-    if (ep.transport != ZMK_TRANSPORT_BLE || pad >= 2 || !body ||
+    if (ep.transport != ZMK_TRANSPORT_BLE || pad >= ZMK_PTP_PAD_COUNT || !body ||
         ep.ble.profile_index < 0 || ep.ble.profile_index >= ZMK_BLE_PROFILE_COUNT) return -EINVAL;
     bt_addr_le_t *addr = zmk_ble_profile_address(ep.ble.profile_index);
     struct bt_conn *conn = addr ? bt_conn_lookup_addr_le(BT_ID_DEFAULT, addr) : NULL;
     if (!conn) return -ENOTCONN;
-    const struct bt_gatt_attr *attr = input_attribute(pad ? &ptp_right_svc : &ptp_left_svc, &ptp_input[pad]);
+    const struct bt_gatt_attr *attr = input_attribute(&ptp_surface_svc, &ptp_input[pad]);
     int err;
     if (bt_conn_get_security(conn) < BT_SECURITY_L2) err = -EACCES;
     else if (!attr) err = -ENOENT;

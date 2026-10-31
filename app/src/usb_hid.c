@@ -105,12 +105,11 @@ static int get_report_cb(const struct device *dev, struct usb_setup_packet *setu
         break;
     case HID_REPORT_TYPE_INPUT:
 #if IS_ENABLED(CONFIG_ZMK_PTP)
-        if ((setup->wValue & 0xff) == ZMK_PTP_REPORT_ID(0) ||
-            (setup->wValue & 0xff) == ZMK_PTP_REPORT_ID(1)) {
+        if ((setup->wValue & 0xff) == ZMK_PTP_REPORT_ID(0)) {
             static uint8_t idle[1 + ZMK_PTP_BODY_SIZE];
             idle[0] = setup->wValue & 0xff;
             zmk_ptp_get_input((struct zmk_endpoint_instance){.transport = ZMK_TRANSPORT_USB},
-                              idle[0] == ZMK_PTP_REPORT_ID(0) ? 0 : 1, idle + 1);
+                              0, idle + 1);
             *data = idle; *len = sizeof(idle);
             return 0;
         }
