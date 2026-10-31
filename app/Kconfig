@@ -727,10 +727,10 @@ rsource "Kconfig.defaults"
 source "Kconfig.zephyr"
 
 config ZMK_PTP
-    bool "Experimental dual Windows Precision Touchpad HID"
+    bool "Experimental unified Windows Precision Touchpad HID"
     depends on ZMK_POINTING
     depends on !ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL
     default n
     help
-      Expose two four-contact PTP collections over USB and BLE. This adds
+      Expose one four-contact PTP collection over USB and BLE. This adds
       transport support only; a frame producer must be enabled separately.
