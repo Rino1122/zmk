@@ -6,7 +6,7 @@
 
 #define ZMK_PTP_PAD_COUNT 1 /* One host surface; two physical sensor regions. */
 #define ZMK_PTP_CONTACTS 4
-#define ZMK_PTP_BODY_SIZE 27
+#define ZMK_PTP_BODY_SIZE 28
 #define ZMK_PTP_REPORT_ID(pad) (0x10 + (pad) * 0x10)
 #define ZMK_PTP_CAPS_ID(pad) (ZMK_PTP_REPORT_ID(pad) + 1)
 #define ZMK_PTP_CERT_ID(pad) (ZMK_PTP_REPORT_ID(pad) + 2)

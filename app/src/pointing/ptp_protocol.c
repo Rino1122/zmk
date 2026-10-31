@@ -109,9 +109,13 @@ int zmk_ptp_encode(const struct zmk_ptp_frame *frame, uint8_t body[ZMK_PTP_BODY_
     body[24] = frame->scan_time;
     body[25] = frame->scan_time >> 8;
     body[26] = frame->count;
+    /* Discrete-pad Button 2/3 are declared for Windows validation. Physical
+     * key clicks stay on the independent mouse report; both bits remain up. */
+    body[27] = 0;
     return 0;
 }
 void zmk_ptp_encode_up(uint8_t body[ZMK_PTP_BODY_SIZE]) {
+    body[27] = 0;
     for (unsigned i = 0; i < ZMK_PTP_CONTACTS; i++)
         body[i * 6] &= ~ZMK_PTP_TIP;
 }
