@@ -398,6 +398,9 @@ static uint8_t relay_event_tx_sequence;
 static uint8_t relay_event_frame[sizeof(struct relay_event_header) +
                                  CONFIG_ZMK_SPLIT_RELAY_EVENT_TYPE_NAME_LEN +
                                  CONFIG_ZMK_SPLIT_RELAY_EVENT_DATA_LEN];
+/* Relay fragments must never block the keyboard notification worker. */
+static struct k_work_q relay_work_q;
+K_THREAD_STACK_DEFINE(relay_work_stack, 2048);
 K_MSGQ_DEFINE(relay_event_msgq, sizeof(struct zmk_split_relay_event_payload),
               CONFIG_ZMK_SPLIT_BLE_PERIPHERAL_POSITION_QUEUE_SIZE, 4);
 
@@ -519,22 +522,9 @@ void send_relay_event_callback(struct k_work *work) {
 K_WORK_DEFINE(service_relay_event_notify_work, send_relay_event_callback);
 
 int zmk_split_bt_send_relay_event(const struct zmk_split_relay_event_payload *ev) {
-    int err = k_msgq_put(&relay_event_msgq, ev, K_MSEC(100));
-    if (err) {
-        switch (err) {
-        case -EAGAIN: {
-            LOG_WRN("Relay event message queue full, popping first message and queueing again");
-            struct zmk_split_relay_event_payload discarded_ev;
-            k_msgq_get(&relay_event_msgq, &discarded_ev, K_NO_WAIT);
-            return zmk_split_bt_send_relay_event(ev);
-        }
-        default:
-            LOG_WRN("Failed to queue relay event to send (%d)", err);
-            return err;
-        }
-    }
-
-    k_work_submit_to_queue(&service_work_q, &service_relay_event_notify_work);
+    int err = k_msgq_put(&relay_event_msgq, ev, K_NO_WAIT);
+    if (err) return -EAGAIN; /* The producer owns retry/loss policy. */
+    k_work_submit_to_queue(&relay_work_q, &service_relay_event_notify_work);
     return 0;
 }
 
@@ -565,6 +555,10 @@ static int zmk_split_bt_report_input(uint8_t reg, uint8_t type, uint16_t code, i
 #endif /* IS_ENABLED(CONFIG_ZMK_INPUT_SPLIT) */
 
 static int service_init(void) {
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_RELAY_EVENT)
+    k_work_queue_start(&relay_work_q, relay_work_stack, K_THREAD_STACK_SIZEOF(relay_work_stack),
+                      K_PRIO_PREEMPT(11), NULL);
+#endif
     static const struct k_work_queue_config queue_config = {
         .name = "Split Peripheral Notification Queue"};
     k_work_queue_start(&service_work_q, service_q_stack, K_THREAD_STACK_SIZEOF(service_q_stack),

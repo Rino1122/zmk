@@ -332,6 +332,8 @@ struct relay_event_wrapper {
     struct zmk_split_relay_event_payload payload;
 };
 
+static struct k_work_q relay_control_work_q;
+K_THREAD_STACK_DEFINE(relay_control_stack, 2048);
 K_MSGQ_DEFINE(relay_event_msgq, sizeof(struct relay_event_wrapper),
               CONFIG_ZMK_SPLIT_BLE_CENTRAL_POSITION_QUEUE_SIZE, 4);
 K_WORK_DEFINE(update_peripherals_relay_event_work, update_peripherals_relay_event_work_handler);
@@ -344,7 +346,7 @@ static int split_central_bt_queue_relay_event(uint8_t source,
         LOG_ERR("Failed to queue relay event to send (%d)", err);
         return err;
     }
-    k_work_submit(&update_peripherals_relay_event_work);
+    k_work_submit_to_queue(&relay_control_work_q, &update_peripherals_relay_event_work);
     return 0;
 }
 
@@ -436,7 +438,7 @@ static void update_peripherals_relay_event_work_handler(struct k_work *_work) {
     }
 
     if (k_msgq_num_used_get(&relay_event_msgq) > 0) {
-        k_work_submit(&update_peripherals_relay_event_work);
+        k_work_submit_to_queue(&relay_control_work_q, &update_peripherals_relay_event_work);
     }
 }
 
@@ -1379,6 +1381,10 @@ static struct settings_handler ble_central_settings_handler = {
 #endif // IS_ENABLED(CONFIG_SETTINGS)
 
 static int zmk_split_bt_central_init(void) {
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_RELAY_EVENT)
+    k_work_queue_start(&relay_control_work_q, relay_control_stack,
+                      K_THREAD_STACK_SIZEOF(relay_control_stack), K_PRIO_PREEMPT(11), NULL);
+#endif
     k_work_queue_start(&split_central_split_run_q, split_central_split_run_q_stack,
                        K_THREAD_STACK_SIZEOF(split_central_split_run_q_stack),
                        CONFIG_ZMK_BLE_THREAD_PRIORITY, NULL);
