@@ -293,10 +293,14 @@ static ssize_t write_ptp_feature(struct bt_conn *conn, const struct bt_gatt_attr
                                 const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
     if (offset) return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
     if (flags & BT_GATT_WRITE_FLAG_PREPARE) return BT_GATT_ERR(BT_ATT_ERR_NOT_SUPPORTED);
-    if (len != 1) return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
     struct zmk_endpoint_instance ep;
     if (ptp_endpoint(conn, &ep)) return BT_GATT_ERR(BT_ATT_ERR_AUTHORIZATION);
     const struct hids_report *ref = attr->user_data;
+    /* HIDS requires READ|WRITE for every Feature characteristic, even when
+     * the HID feature is immutable. Reject changes to capabilities/cert data. */
+    if (ref->id == ZMK_PTP_CAPS_ID(0) || ref->id == ZMK_PTP_CERT_ID(0))
+        return BT_GATT_ERR(BT_ATT_ERR_WRITE_NOT_PERMITTED);
+    if (len != 1) return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
     int err = zmk_ptp_set_feature(ep, ref->id, buf, len);
     return err ? BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED) : len;
 }
@@ -309,18 +313,18 @@ static void ptp_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value) {
     BT_GATT_CCC(ptp_ccc_changed, BT_GATT_PERM_READ_ENCRYPT | BT_GATT_PERM_WRITE_ENCRYPT), \
     BT_GATT_DESCRIPTOR(BT_UUID_HIDS_REPORT_REF, BT_GATT_PERM_READ_ENCRYPT, \
         read_hids_report_ref, NULL, &ptp_input[p])
-#define PTP_FEATURE_ATTR(i, writable) \
+#define PTP_FEATURE_ATTR(i) \
     BT_GATT_CHARACTERISTIC(BT_UUID_HIDS_REPORT, \
-        BT_GATT_CHRC_READ | ((writable) ? BT_GATT_CHRC_WRITE : 0), \
-        BT_GATT_PERM_READ_ENCRYPT | ((writable) ? BT_GATT_PERM_WRITE_ENCRYPT : 0), \
-        read_ptp_feature, (writable) ? write_ptp_feature : NULL, &ptp_features[i]), \
+        BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE, \
+        BT_GATT_PERM_READ_ENCRYPT | BT_GATT_PERM_WRITE_ENCRYPT, \
+        read_ptp_feature, write_ptp_feature, &ptp_features[i]), \
     BT_GATT_DESCRIPTOR(BT_UUID_HIDS_REPORT_REF, BT_GATT_PERM_READ_ENCRYPT, \
         read_hids_report_ref, NULL, &ptp_features[i])
 #define PTP_PAD_ATTRS(p) \
     PTP_INPUT_ATTRS(p), \
-    PTP_FEATURE_ATTR((p)*5, false), PTP_FEATURE_ATTR((p)*5+1, false), \
-    PTP_FEATURE_ATTR((p)*5+2, true), PTP_FEATURE_ATTR((p)*5+3, true), \
-    PTP_FEATURE_ATTR((p)*5+4, true)
+    PTP_FEATURE_ATTR((p)*5), PTP_FEATURE_ATTR((p)*5+1), \
+    PTP_FEATURE_ATTR((p)*5+2), PTP_FEATURE_ATTR((p)*5+3), \
+    PTP_FEATURE_ATTR((p)*5+4)
 #endif
 
 /* HID Service Declaration */
