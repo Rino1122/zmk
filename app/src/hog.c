@@ -20,6 +20,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/hid.h>
 #if IS_ENABLED(CONFIG_ZMK_PTP)
 #include <zmk/pointing/ptp.h>
+#include <zmk/pointing/ptp_compat.h>
 #endif
 #if IS_ENABLED(CONFIG_ZMK_POINTING_SMOOTH_SCROLLING)
 #include <zmk/pointing/resolution_multipliers.h>
@@ -262,11 +263,16 @@ static struct hids_report ptp_input[] = {
     {.id=ZMK_PTP_SELECT_ID(p),.type=HIDS_FEATURE}, \
     {.id=ZMK_PTP_LATENCY_ID(p),.type=HIDS_FEATURE}
 static struct hids_report ptp_features[] = {PTP_FEATURE_REFS(0)};
+static bool ptp_needs_bind_reset[CONFIG_BT_MAX_CONN];
 static int ptp_endpoint(struct bt_conn *conn, struct zmk_endpoint_instance *ep) {
     int profile = zmk_ble_profile_index(bt_conn_get_dst(conn));
     if (profile < 0 || bt_conn_get_security(conn) < BT_SECURITY_L2) return -EACCES;
     *ep = (struct zmk_endpoint_instance){.transport = ZMK_TRANSPORT_BLE,
                                        .ble = {.profile_index = profile}};
+    if(ptp_needs_bind_reset[bt_conn_index(conn)]) {
+        zmk_ptp_reset(*ep);
+        ptp_needs_bind_reset[bt_conn_index(conn)]=false;
+    }
     return 0;
 }
 static ssize_t read_ptp_input(struct bt_conn *conn, const struct bt_gatt_attr *attr,
@@ -383,10 +389,23 @@ BT_GATT_SERVICE_DEFINE(
 /* One unified PTP service; the legacy keyboard/mouse service is unchanged. */
 static const uint8_t ptp_surface_map[] = {ZMK_PTP_DESCRIPTOR(0)};
 BUILD_ASSERT(sizeof(ptp_surface_map) <= BT_ATT_MAX_ATTRIBUTE_LEN);
+#if IS_ENABLED(CONFIG_ZMK_PTP_COMPAT)
+static uint8_t ptp_vendor_map[sizeof(ptp_surface_map)];
+static int init_ptp_vendor_map(void) {
+    return zmk_ptp_compat_vendor_map(ptp_vendor_map,sizeof(ptp_vendor_map))<0?-EINVAL:0;
+}
+SYS_INIT(init_ptp_vendor_map,APPLICATION,93);
+#endif
 static ssize_t read_ptp_map(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                             void *buf, uint16_t len, uint16_t offset) {
-    return bt_gatt_attr_read(conn, attr, buf, len, offset, attr->user_data,
-                            sizeof(ptp_surface_map));
+    const uint8_t *map=attr->user_data;
+#if IS_ENABLED(CONFIG_ZMK_PTP_COMPAT)
+    int profile=zmk_ble_profile_index(bt_conn_get_dst(conn));
+    if(profile<0)profile=zmk_ble_active_profile_index();
+    if(zmk_ptp_compat_forced((struct zmk_endpoint_instance){.transport=ZMK_TRANSPORT_BLE,
+        .ble={.profile_index=profile}}))map=ptp_vendor_map;
+#endif
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, map, sizeof(ptp_surface_map));
 }
 static uint8_t ptp_ctrl[ZMK_PTP_PAD_COUNT];
 static struct hids_info ptp_info = {.version = 0x0111, .flags = HIDS_NORMALLY_CONNECTABLE};
@@ -416,6 +435,7 @@ int zmk_hog_send_ptp_report(struct zmk_endpoint_instance ep, unsigned pad,
                            const uint8_t body[ZMK_PTP_BODY_SIZE]) {
     if (ep.transport != ZMK_TRANSPORT_BLE || pad >= ZMK_PTP_PAD_COUNT || !body ||
         ep.ble.profile_index < 0 || ep.ble.profile_index >= ZMK_BLE_PROFILE_COUNT) return -EINVAL;
+    if(zmk_ptp_compat_forced(ep))return -EACCES;
     bt_addr_le_t *addr = zmk_ble_profile_address(ep.ble.profile_index);
     struct bt_conn *conn = addr ? bt_conn_lookup_addr_le(BT_ID_DEFAULT, addr) : NULL;
     if (!conn) return -ENOTCONN;
@@ -454,6 +474,7 @@ static void ptp_connected(struct bt_conn *conn, uint8_t err) {
     struct bt_conn_info info;
     if (err || bt_conn_get_info(conn, &info) || info.role != BT_CONN_ROLE_PERIPHERAL) return;
     int profile = zmk_ble_profile_index(bt_conn_get_dst(conn));
+    ptp_needs_bind_reset[bt_conn_index(conn)]=profile<0;
     if (profile >= 0) zmk_ptp_reset((struct zmk_endpoint_instance){.transport = ZMK_TRANSPORT_BLE,
                                                                 .ble = {.profile_index = profile}});
 }

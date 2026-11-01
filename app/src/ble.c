@@ -287,6 +287,17 @@ static int ble_save_profile(void) {
 #endif
 }
 
+int zmk_ble_flush_active_profile(void) {
+#if IS_ENABLED(CONFIG_SETTINGS)
+    struct k_work_sync sync;
+    k_work_cancel_delayable_sync(&ble_save_work,&sync);
+    uint8_t profile=active_profile;
+    return settings_save_one("ble/active_profile",&profile,sizeof(profile));
+#else
+    return 0;
+#endif
+}
+
 int zmk_ble_prof_select(uint8_t index) {
     if (index >= ZMK_BLE_PROFILE_COUNT) {
         return -ERANGE;

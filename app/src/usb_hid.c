@@ -15,6 +15,7 @@
 #include <zmk/keymap.h>
 #if IS_ENABLED(CONFIG_ZMK_PTP)
 #include <zmk/pointing/ptp.h>
+#include <zmk/pointing/ptp_compat.h>
 #endif
 
 #if IS_ENABLED(CONFIG_ZMK_POINTING_SMOOTH_SCROLLING)
@@ -307,6 +308,7 @@ int zmk_usb_hid_send_mouse_report() {
 int zmk_usb_hid_send_ptp_report(unsigned pad, const uint8_t body[ZMK_PTP_BODY_SIZE]) {
     if (pad >= ZMK_PTP_PAD_COUNT || !body) return -EINVAL;
     if (!ptp_hid_dev) return -ENODEV;
+    if (zmk_ptp_compat_forced((struct zmk_endpoint_instance){.transport=ZMK_TRANSPORT_USB})) return -EACCES;
     if (!zmk_usb_is_hid_ready() || zmk_usb_get_status() == USB_DC_SUSPEND) return -ENOTCONN;
     /* nrfx transfers asynchronously from this address without copying it.
      * Hold storage until int_in_ready releases the semaphore. Acquire before
@@ -339,8 +341,16 @@ static int zmk_usb_hid_init(void) {
 #if IS_ENABLED(CONFIG_ZMK_PTP)
     ptp_hid_dev = device_get_binding("HID_1");
     if (!ptp_hid_dev) return -ENODEV;
-    usb_hid_register_device(ptp_hid_dev, zmk_ptp_usb_report_desc,
-                            sizeof(zmk_ptp_usb_report_desc), &ptp_ops);
+    const uint8_t *map=zmk_ptp_usb_report_desc;
+#if IS_ENABLED(CONFIG_ZMK_PTP_COMPAT)
+    static uint8_t vendor_map[sizeof(zmk_ptp_usb_report_desc)];
+    if(zmk_ptp_compat_forced((struct zmk_endpoint_instance){.transport=ZMK_TRANSPORT_USB})) {
+        int size=zmk_ptp_compat_vendor_map(vendor_map,sizeof(vendor_map));
+        if(size<0)return size;
+        map=vendor_map;
+    }
+#endif
+    usb_hid_register_device(ptp_hid_dev, map, sizeof(zmk_ptp_usb_report_desc), &ptp_ops);
     err = usb_hid_init(ptp_hid_dev);
     if (err) return err;
 #endif

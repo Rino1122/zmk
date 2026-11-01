@@ -1,0 +1,3 @@
+description: Per-host Precision Touchpad compatibility mode (changed policy restarts central)
+compatible: "zmk,behavior-ptp-mode"
+include: one_param.yaml

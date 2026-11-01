@@ -9,6 +9,7 @@
 #include <zmk/event_manager.h>
 #include <zmk/events/endpoint_changed.h>
 #include <zmk/pointing/ptp.h>
+#include <zmk/pointing/ptp_compat.h>
 LOG_MODULE_REGISTER(zmk_ptp, CONFIG_ZMK_LOG_LEVEL);
 
 #if IS_ENABLED(CONFIG_ZMK_BLE)
@@ -213,6 +214,8 @@ int zmk_ptp_set_feature(struct zmk_endpoint_instance ep, uint8_t id, const uint8
     int index = endpoint_index(ep), pad = zmk_ptp_feature_pad(id);
     if (index < 0 || pad < 0)
         return -ENOTSUP;
+    if(zmk_ptp_compat_forced(ep))return -EACCES;
+    if(zmk_ptp_compat_changing(ep))return -EAGAIN;
     k_spinlock_key_t key = k_spin_lock(&state_lock);
     struct pad_state *s = state_for(index, pad);
     struct zmk_ptp_protocol before = s->status.protocol;
@@ -232,6 +235,8 @@ static int submit_frame(struct zmk_endpoint_instance ep, unsigned pad, uint32_t 
     int index = endpoint_index(ep);
     if (index < 0 || pad >= ZMK_PTP_PAD_COUNT)
         return -EINVAL;
+    if(zmk_ptp_compat_forced(ep))return -EACCES;
+    if(zmk_ptp_compat_changing(ep))return -EAGAIN;
     struct queued_frame queued = {.endpoint = ep, .pad = pad, .generation = generation};
     int err = zmk_ptp_encode(frame, queued.body);
     if (err)

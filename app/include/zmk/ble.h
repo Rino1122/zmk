@@ -49,3 +49,6 @@ int zmk_ble_set_directed_advertising(bool enable);
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
 int zmk_ble_put_peripheral_addr(const bt_addr_le_t *addr);
 #endif /* IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL) */
+
+/* Persist the currently selected slot before an intentional restart. */
+int zmk_ble_flush_active_profile(void);

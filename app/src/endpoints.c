@@ -468,6 +468,17 @@ static int zmk_endpoints_init(void) {
     return 0;
 }
 
+int zmk_endpoint_flush_preference(void) {
+#if IS_ENABLED(CONFIG_SETTINGS)
+    struct k_work_sync sync;
+    k_work_cancel_delayable_sync(&endpoints_save_work,&sync);
+    enum zmk_transport preference=preferred_transport;
+    return settings_save_one(SETTING_PREFERRED_TRANSPORT,&preference,sizeof(preference));
+#else
+    return 0;
+#endif
+}
+
 void zmk_endpoint_clear_reports(void) {
     zmk_hid_keyboard_clear();
     zmk_hid_consumer_clear();

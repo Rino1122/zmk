@@ -110,3 +110,6 @@ int zmk_endpoint_send_mouse_report();
  * Clears all HID reports for the selected endpoint.
  */
 void zmk_endpoint_clear_reports(void);
+
+/* Persist output preference before an intentional restart. */
+int zmk_endpoint_flush_preference(void);
