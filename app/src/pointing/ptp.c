@@ -18,7 +18,7 @@ LOG_MODULE_REGISTER(zmk_ptp, CONFIG_ZMK_LOG_LEVEL);
 #define ENDPOINT_COUNT 1
 #endif
 struct pad_state {
-    bool initialized, release_pending;
+    bool initialized, release_pending, cancel_pending;
     struct zmk_ptp_status status;
     uint8_t last[ZMK_PTP_BODY_SIZE];
 };
@@ -88,6 +88,7 @@ static void send_pending(struct k_work *work) {
         for (unsigned pad = 0; pad < ZMK_PTP_PAD_COUNT; pad++) {
             uint8_t up[ZMK_PTP_BODY_SIZE];
             uint32_t generation;
+            bool cancel;
             k_spinlock_key_t key = k_spin_lock(&state_lock);
             struct pad_state *s = state_for(i, pad);
             if (!s->release_pending) {
@@ -96,7 +97,34 @@ static void send_pending(struct k_work *work) {
             }
             memcpy(up, s->last, sizeof(up));
             generation = s->status.generation;
+            cancel = s->cancel_pending;
             k_spin_unlock(&state_lock, key);
+            /* A forced end is not a physical lift. Mark the last reported
+             * contacts unintentional before sending UP. Keep this outside the
+             * movement queue so generation invalidation cannot discard it. */
+            if (cancel) {
+                for (unsigned c = 0; c < ZMK_PTP_CONTACTS; c++)
+                    up[c * 6] &= ~ZMK_PTP_CONFIDENCE;
+                int err = up[26] ? transport_send(endpoint_for(i), pad, up) : 0;
+                key = k_spin_lock(&state_lock);
+                s->status.last_error = err;
+                bool same = s->status.generation == generation;
+                if (!err && same) {
+                    memcpy(s->last, up, sizeof(up));
+                    s->cancel_pending = false;
+                } else if (same && (err == -ENOTCONN || err == -ENODEV || err == -EACCES)) {
+                    memset(s->last, 0, sizeof(s->last));
+                    s->cancel_pending = false;
+                    s->release_pending = false;
+                }
+                k_spin_unlock(&state_lock, key);
+                if (err || !same) {
+                    if (same && (err == -ENOTCONN || err == -ENODEV || err == -EACCES))
+                        continue;
+                    retry = true;
+                    continue;
+                }
+            }
             zmk_ptp_encode_up(up);
             int err = up[26] ? transport_send(endpoint_for(i), pad, up) : 0;
             key = k_spin_lock(&state_lock);
@@ -275,7 +303,9 @@ void zmk_ptp_cancel(struct zmk_endpoint_instance ep, unsigned pad) {
     if (index < 0 || pad >= ZMK_PTP_PAD_COUNT)
         return;
     k_spinlock_key_t key = k_spin_lock(&state_lock);
-    invalidate(state_for(index, pad));
+    struct pad_state *s = state_for(index, pad);
+    invalidate(s);
+    s->cancel_pending = true;
     k_spin_unlock(&state_lock, key);
     schedule();
 }
