@@ -1,3 +1,4 @@
+#include <zmk/output_diagnostics.h>
 /*
  * Copyright (c) 2020 The ZMK Contributors
  *
@@ -34,7 +35,16 @@ static const struct device *hid_dev;
 
 static K_SEM_DEFINE(hid_sem, 1, 1);
 
-static void in_ready_cb(const struct device *dev) { k_sem_give(&hid_sem); }
+#if IS_ENABLED(CONFIG_ZMK_OUTPUT_DIAGNOSTICS)
+static atomic_t usb_mouse_diag_token;
+#endif
+static void in_ready_cb(const struct device *dev) {
+#if IS_ENABLED(CONFIG_ZMK_OUTPUT_DIAGNOSTICS)
+ uint32_t token=atomic_set(&usb_mouse_diag_token,0);
+ zmk_od_note(ZMK_OD_USB_COMPLETE,token,0);
+#endif
+ k_sem_give(&hid_sem);
+}
 
 #define HID_GET_REPORT_TYPE_MASK 0xff00
 #define HID_GET_REPORT_ID_MASK 0x00ff
@@ -251,7 +261,7 @@ static const struct hid_ops ops = {
     .set_report = set_report_cb,
 };
 
-static int zmk_usb_hid_send_report(const uint8_t *report, size_t len) {
+static int zmk_usb_hid_send_report(const uint8_t *report, size_t len, uint32_t diag_token) {
     switch (zmk_usb_get_status()) {
     case USB_DC_SUSPEND:
         return usb_wakeup_request();
@@ -261,11 +271,21 @@ static int zmk_usb_hid_send_report(const uint8_t *report, size_t len) {
     case USB_DC_UNKNOWN:
         return -ENODEV;
     default: {
+        uint32_t wait_token=diag_token?zmk_od_stamp():0;
         int err = k_sem_take(&hid_sem, K_MSEC(30));
+        zmk_od_note(ZMK_OD_USB_WAIT,wait_token,err);
         if (err) return err;
+#if IS_ENABLED(CONFIG_ZMK_OUTPUT_DIAGNOSTICS)
+        atomic_set(&usb_mouse_diag_token,diag_token);
+#endif
+        uint32_t write_token=diag_token?zmk_od_stamp():0;
         err = hid_int_ep_write(hid_dev, report, len, NULL);
+        zmk_od_note(ZMK_OD_USB_WRITE,write_token,err);
 
         if (err) {
+#if IS_ENABLED(CONFIG_ZMK_OUTPUT_DIAGNOSTICS)
+            atomic_clear(&usb_mouse_diag_token);
+#endif
             k_sem_give(&hid_sem);
         }
 
@@ -277,7 +297,7 @@ static int zmk_usb_hid_send_report(const uint8_t *report, size_t len) {
 int zmk_usb_hid_send_keyboard_report(void) {
     size_t len;
     uint8_t *report = get_keyboard_report(&len);
-    return zmk_usb_hid_send_report(report, len);
+    return zmk_usb_hid_send_report(report, len, 0);
 }
 
 int zmk_usb_hid_send_consumer_report(void) {
@@ -288,7 +308,7 @@ int zmk_usb_hid_send_consumer_report(void) {
 #endif /* IS_ENABLED(CONFIG_ZMK_USB_BOOT) */
 
     struct zmk_hid_consumer_report *report = zmk_hid_get_consumer_report();
-    return zmk_usb_hid_send_report((uint8_t *)report, sizeof(*report));
+    return zmk_usb_hid_send_report((uint8_t *)report, sizeof(*report), 0);
 }
 
 #if IS_ENABLED(CONFIG_ZMK_POINTING)
@@ -300,7 +320,10 @@ int zmk_usb_hid_send_mouse_report() {
 #endif /* IS_ENABLED(CONFIG_ZMK_USB_BOOT) */
 
     struct zmk_hid_mouse_report *report = zmk_hid_get_mouse_report();
-    return zmk_usb_hid_send_report((uint8_t *)report, sizeof(*report));
+    uint32_t token=zmk_od_stamp();
+    int rc=zmk_usb_hid_send_report((uint8_t *)report, sizeof(*report), token);
+    zmk_od_note(ZMK_OD_USB_RETURN,token,rc);
+    return rc;
 }
 #endif // IS_ENABLED(CONFIG_ZMK_POINTING)
 

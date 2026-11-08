@@ -1,3 +1,4 @@
+#include <zmk/output_diagnostics.h>
 /*
  * Copyright (c) 2020 The ZMK Contributors
  *
@@ -604,24 +605,49 @@ int zmk_hog_send_consumer_report(struct zmk_hid_consumer_report_body *report) {
 
 #if IS_ENABLED(CONFIG_ZMK_POINTING)
 
-K_MSGQ_DEFINE(zmk_hog_mouse_msgq, sizeof(struct zmk_hid_mouse_report_body),
+struct mouse_queue_item {
+ struct zmk_hid_mouse_report_body body;
+#if IS_ENABLED(CONFIG_ZMK_OUTPUT_DIAGNOSTICS)
+ uint32_t diag_token;
+#endif
+};
+#if IS_ENABLED(CONFIG_ZMK_OUTPUT_DIAGNOSTICS)
+static void mouse_diag_complete(struct bt_conn *conn,void *data) {
+ (void)conn;zmk_od_note(ZMK_OD_BLE_COMPLETE,(uint32_t)(uintptr_t)data,0);
+}
+#endif
+K_MSGQ_DEFINE(zmk_hog_mouse_msgq, sizeof(struct mouse_queue_item),
               CONFIG_ZMK_BLE_MOUSE_REPORT_QUEUE_SIZE, 4);
 
 void send_mouse_report_callback(struct k_work *work) {
-    struct zmk_hid_mouse_report_body report;
+    struct mouse_queue_item report;
     while (k_msgq_get(&zmk_hog_mouse_msgq, &report, K_NO_WAIT) == 0) {
         struct bt_conn *conn = zmk_ble_active_profile_conn();
         if (conn == NULL) {
+#if IS_ENABLED(CONFIG_ZMK_OUTPUT_DIAGNOSTICS)
+            zmk_od_note(ZMK_OD_BLE_DROP,report.diag_token,-ENOTCONN);
+#endif
             return;
         }
 
+#if IS_ENABLED(CONFIG_ZMK_OUTPUT_DIAGNOSTICS)
+        zmk_od_note(ZMK_OD_BLE_QUEUE,report.diag_token,0);
+#endif
         struct bt_gatt_notify_params notify_params = {
             .attr = input_attribute(&hog_svc, &mouse_input),
-            .data = &report,
-            .len = sizeof(report),
+            .data = &report.body,
+            .len = sizeof(report.body),
         };
 
+#if IS_ENABLED(CONFIG_ZMK_OUTPUT_DIAGNOSTICS)
+        if(report.diag_token){notify_params.func=mouse_diag_complete;notify_params.user_data=(void *)(uintptr_t)report.diag_token;}
+#endif
+        uint32_t call_token=zmk_od_stamp();
         int err = bt_gatt_notify_cb(conn, &notify_params);
+        zmk_od_note(ZMK_OD_BLE_NOTIFY,call_token,err);
+#if IS_ENABLED(CONFIG_ZMK_OUTPUT_DIAGNOSTICS)
+        if(err)zmk_od_note(ZMK_OD_BLE_DROP,report.diag_token,err);
+#endif
         if (err == -EPERM) {
             bt_conn_set_security(conn, BT_SECURITY_L2);
         } else if (err) {
@@ -635,13 +661,23 @@ void send_mouse_report_callback(struct k_work *work) {
 K_WORK_DEFINE(hog_mouse_work, send_mouse_report_callback);
 
 int zmk_hog_send_mouse_report(struct zmk_hid_mouse_report_body *report) {
-    int err = k_msgq_put(&zmk_hog_mouse_msgq, report, K_MSEC(100));
+    struct mouse_queue_item item={.body=*report};
+    uint32_t token=zmk_od_stamp();
+#if IS_ENABLED(CONFIG_ZMK_OUTPUT_DIAGNOSTICS)
+    item.diag_token=token;
+#endif
+    int err = k_msgq_put(&zmk_hog_mouse_msgq, &item, K_MSEC(100));
+    zmk_od_note(ZMK_OD_BLE_ENQUEUE,token,err);
     if (err) {
         switch (err) {
         case -EAGAIN: {
             LOG_WRN("Consumer message queue full, popping first message and queueing again");
-            struct zmk_hid_mouse_report_body discarded_report;
-            k_msgq_get(&zmk_hog_mouse_msgq, &discarded_report, K_NO_WAIT);
+            struct mouse_queue_item discarded_report;
+            if(!k_msgq_get(&zmk_hog_mouse_msgq, &discarded_report, K_NO_WAIT)) {
+#if IS_ENABLED(CONFIG_ZMK_OUTPUT_DIAGNOSTICS)
+                zmk_od_note(ZMK_OD_BLE_DROP,discarded_report.diag_token,-ENOBUFS);
+#endif
+            }
             return zmk_hog_send_mouse_report(report);
         }
         default:

@@ -16,6 +16,12 @@ config ZMK_BOARD_COMPAT
       used a ZMK variant of an upstream board, or are using a board
       properly migrated to a newer ZMK version.
 
+config ZMK_OUTPUT_DIAGNOSTICS
+    bool "Optional timestamp hooks for Mouse HID pipeline diagnostics"
+    default n
+    help
+      Board-provided RAM diagnostics. No logging or timer is added by these hooks.
+
 menu "Basic Keyboard Setup"
 
 config ZMK_KEYBOARD_NAME
