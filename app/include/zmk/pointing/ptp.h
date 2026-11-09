@@ -44,3 +44,8 @@ void zmk_ptp_note_usb_feature(uint8_t id, bool write, uint16_t requested, size_t
  * Never use this to silently drop sensor transitions. */
 int zmk_ptp_try_submit(struct zmk_endpoint_instance ep, unsigned pad, uint32_t generation,
                        const struct zmk_ptp_frame *frame);
+
+/* Lifetime producer callback. Notifications are coalesced on the system queue,
+ * outside PTP locks; callback must only schedule producer work. */
+void zmk_ptp_subscribe_changed(void (*callback)(void));
+void zmk_ptp_notify_changed(void);

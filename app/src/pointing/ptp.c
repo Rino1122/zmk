@@ -24,6 +24,22 @@ struct pad_state {
 };
 static struct pad_state states[ENDPOINT_COUNT][ZMK_PTP_PAD_COUNT];
 static struct k_spinlock state_lock;
+static void (*changed_callback)(void);
+static void changed_work_handler(struct k_work *work) {
+    ARG_UNUSED(work);
+    k_spinlock_key_t key = k_spin_lock(&state_lock);
+    void (*callback)(void) = changed_callback;
+    k_spin_unlock(&state_lock, key);
+    if (callback) callback();
+}
+K_WORK_DEFINE(changed_work, changed_work_handler);
+void zmk_ptp_notify_changed(void) { k_work_submit(&changed_work); }
+void zmk_ptp_subscribe_changed(void (*callback)(void)) {
+    k_spinlock_key_t key = k_spin_lock(&state_lock);
+    changed_callback = callback;
+    k_spin_unlock(&state_lock, key);
+    zmk_ptp_notify_changed();
+}
 struct queued_frame {
     struct zmk_endpoint_instance endpoint;
     uint32_t generation;
@@ -63,6 +79,7 @@ static void invalidate(struct pad_state *s) {
     if (!++s->status.generation)
         s->status.generation = 1;
     s->release_pending = true;
+    zmk_ptp_notify_changed();
 }
 static int transport_send(struct zmk_endpoint_instance ep, unsigned pad, const uint8_t *body) {
     switch (ep.transport) {
@@ -166,6 +183,7 @@ static void send_pending(struct k_work *work) {
             /* If the host changed mode during transport_send, clear this report next. */
             if (s->status.generation != frame.generation) {
                 s->release_pending = true;
+                zmk_ptp_notify_changed();
                 retry = true;
             }
         } else {

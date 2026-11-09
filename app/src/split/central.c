@@ -1,3 +1,7 @@
+#include <zephyr/sys/util.h>
+#if IS_ENABLED(CONFIG_ZMK_PTP)
+#include <zmk/pointing/ptp.h>
+#endif
 /*
  * Copyright (c) 2025 The ZMK Contributors
  *
@@ -248,6 +252,10 @@ static int select_first_available_transport(void) {
 
 static int transport_status_changed_cb(const struct zmk_split_transport_central *central,
                                        struct zmk_split_transport_status status) {
+#if IS_ENABLED(CONFIG_ZMK_PTP)
+    zmk_ptp_notify_changed();
+#endif
+
     if (central == active_transport) {
         LOG_DBG("Central at %p changed status: enabled %d, available %d, connections %d", central,
                 status.enabled, status.available, status.connections);

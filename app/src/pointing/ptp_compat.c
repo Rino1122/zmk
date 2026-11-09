@@ -101,6 +101,7 @@ static void apply_job(const struct compat_job *job) {
     }
     atomic_clear(&last_error[i]);
     atomic_set(&transition_active, 1);
+    zmk_ptp_notify_changed();
     /* All host links will disconnect on reboot. Release PTP and selected legacy
      * reports first; applied modes remain immutable for every live connection. */
     zmk_ptp_cancel((struct zmk_endpoint_instance){.transport = ZMK_TRANSPORT_USB}, 0);
@@ -120,6 +121,7 @@ static void apply_job(const struct compat_job *job) {
     if (err) {
         atomic_set(&last_error[i], err);
         atomic_clear(&transition_active);
+    zmk_ptp_notify_changed();
         atomic_clear(&pending_change);
         return;
     }
@@ -127,6 +129,7 @@ static void apply_job(const struct compat_job *job) {
     /* A platform that returns from reboot has not applied the new descriptor. */
     atomic_set(&last_error[i], -EIO);
     atomic_clear(&transition_active);
+    zmk_ptp_notify_changed();
     atomic_clear(&pending_change);
 }
 static void compat_worker(struct k_work *work) {
@@ -163,6 +166,7 @@ static int compat_init(void) {
     }
     atomic_set(&applied_modes, atomic_get(&saved_modes));
     atomic_set(&storage_ready, 1);
+    zmk_ptp_notify_changed();
     return 0;
 }
 /* USB HID registration is 95, USB enable is 96. BLE waits for the full settings
